@@ -7,10 +7,10 @@ window.FIREBASE_CONFIG = window.FIREBASE_CONFIG || {
   apiKey: "AIzaSyDdetnrACoNTSV3ZqFBPOSfnZzRtmk5fk8",
   authDomain: "nw-checkin.firebaseapp.com",
   projectId: "nw-checkin",
-  storageBucket: "nw-checkin.firebasestorage.app",
+  storageBucket: "nw-checkin.appspot.com",
   messagingSenderId: "520938520545",
   appId: "1:520938520545:web:fb32a42eb1504aab041ca0",
-  measurementId: "G-G6M6NGBC03"
+  measurementId: "G-G6M6NGBC03",
 };
 
 // Google Maps API Key（來自使用者提供）
@@ -208,7 +208,7 @@ function renderHomeStatusText(str) {
     const locText = m ? (m[2] || "") : "";
     const nameText = (homeHeaderNameEl?.textContent || '').replace(/^歡迎~\s*/, '') || '';
     el.style.textAlign = "center";
-    el.innerHTML = `<div>${dateText}</div><div>${nameText ? `${nameText} ` : ''}${locText ? `<span class="status-label ${statusCls}">${locText}</span> ` : ""}<span class="status-label ${statusCls}">${status}</span> <span class="status-flag ${flagCls}">${flag}</span></div>`;
+    el.innerHTML = `<div>${dateText}${nameText ? ` ${nameText}` : ''}</div><div>${nameText ? `${nameText} ` : ''}${locText ? `<span class="status-label ${statusCls}">${locText}</span> ` : ""}<span class="status-label ${statusCls}">${status}</span> <span class="status-flag ${flagCls}">${flag}</span></div>`;
   } else {
     el.textContent = s;
   }
@@ -324,6 +324,7 @@ if (togglePasswordBtn) {
   currentUserId: null,
   currentUserRole: null,
   currentUserEmail: null,
+  leaderCompanyFilter: null,
 };
 
 function id() {
@@ -1459,7 +1460,7 @@ async function importCommunitiesFromXLSX(file) {
       };
       let idNew = null;
       if (db && fns?.addDoc && fns?.collection) {
-        const docRef = await fns.addDoc(fns.collection(db, "communities"), payload);
+        const docRef = await withRetry(() => fns.addDoc(fns.collection(db, "communities"), payload));
         idNew = docRef.id;
       } else {
         idNew = id();
@@ -1539,12 +1540,12 @@ async function importAccountsFromXLSX(file) {
       // 以 Email 去重：存在則更新，否則新增
       let targetId = appState.accounts.find((a) => a.email && email && a.email.toLowerCase() === email.toLowerCase())?.id || null;
       if (db && fns?.setDoc && fns?.doc && targetId) {
-        await fns.setDoc(fns.doc(db, "users", targetId), payload, { merge: true });
+        await withRetry(() => fns.setDoc(fns.doc(db, "users", targetId), payload, { merge: true }));
         const idx = appState.accounts.findIndex((a) => a.id === targetId);
         if (idx >= 0) appState.accounts[idx] = { ...appState.accounts[idx], ...payload };
       } else {
         if (db && fns?.addDoc && fns?.collection) {
-          const docRef = await fns.addDoc(fns.collection(db, "users"), payload);
+          const docRef = await withRetry(() => fns.addDoc(fns.collection(db, "users"), payload));
           targetId = docRef.id;
         } else {
           targetId = id();
@@ -1654,7 +1655,7 @@ async function importAccountsFromXLSX(file) {
               };
               let newId = null;
               try {
-                const ref = await fns.addDoc(fns.collection(db, "pendingAccounts"), fsPayload);
+                const ref = await withRetry(() => fns.addDoc(fns.collection(db, "pendingAccounts"), fsPayload));
                 newId = ref.id;
               } catch (e) {
                 try {
@@ -1782,7 +1783,7 @@ function showProfileModal(user, role) {
                               if (!user?.uid) throw new Error('使用者未登入');
                               const payload = { photoUrl: dataUrl };
                               if (typeof fns.serverTimestamp === 'function') payload.updatedAt = fns.serverTimestamp();
-                              await fns.setDoc(fns.doc(db, 'users', user.uid), payload, { merge: true });
+                              await withRetry(() => fns.setDoc(fns.doc(db, 'users', user.uid), payload, { merge: true }));
                               if (userPhotoEl) userPhotoEl.src = dataUrl;
                               if (homeHeroPhoto) homeHeroPhoto.src = dataUrl;
                               try { const src = homeHeroPhoto?.src || ''; if (homeHeroCrop) { homeHeroCrop.style.backgroundImage = src ? `url(${src})` : ''; } } catch {}
@@ -1989,7 +1990,7 @@ function renderSettingsGeneral() {
         try {
           const payload = { name: data.name || "", coords: data.coords || "", radiusMeters: data.radiusMeters ?? null, order: (data.order != null ? Number(data.order) : null), createdAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date().toISOString() };
           if (db && fns.addDoc && fns.collection) {
-            const docRef = await fns.addDoc(fns.collection(db, "companies"), payload);
+            const docRef = await withRetry(() => fns.addDoc(fns.collection(db, "companies"), payload));
             appState.companies.push({ id: docRef.id, name: payload.name, coords: payload.coords, radiusMeters: payload.radiusMeters, order: payload.order ?? null });
           } else {
             appState.companies.push({ id: id(), name: payload.name, coords: payload.coords, radiusMeters: payload.radiusMeters, order: payload.order ?? null });
@@ -2089,7 +2090,7 @@ function renderSettingsGeneral() {
             try {
               const next = { name: data.name ?? co.name, coords: data.coords ?? co.coords, radiusMeters: data.radiusMeters ?? co.radiusMeters ?? null, order: (data.order != null ? Number(data.order) : (co.order ?? null)) };
               if (db && fns.setDoc && fns.doc) {
-                await fns.setDoc(fns.doc(db, "companies", cid), { ...next, updatedAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date().toISOString() }, { merge: true });
+                await withRetry(() => fns.setDoc(fns.doc(db, "companies", cid), { ...next, updatedAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date().toISOString() }, { merge: true }));
               }
               co.name = next.name;
               co.coords = next.coords;
@@ -2173,7 +2174,7 @@ function renderSettingsGeneral() {
           if (!ok) return;
           try {
             if (db && fns.deleteDoc && fns.doc) {
-              await fns.deleteDoc(fns.doc(db, "companies", cid));
+              await withRetry(() => fns.deleteDoc(fns.doc(db, "companies", cid)));
             }
             appState.companies = appState.companies.filter((c) => c.id !== cid);
             renderSettingsContent("一般");
@@ -2199,7 +2200,7 @@ function renderSettingsGeneral() {
         try {
           const payload = { name: data.name || "", createdAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date().toISOString() };
           if (db && fns.addDoc && fns.collection) {
-            const docRef = await fns.addDoc(fns.collection(db, "regions"), payload);
+            const docRef = await withRetry(() => fns.addDoc(fns.collection(db, "regions"), payload));
             appState.regions.push({ id: docRef.id, name: payload.name });
           } else {
             appState.regions.push({ id: id(), name: payload.name });
@@ -2225,7 +2226,7 @@ function renderSettingsGeneral() {
           try {
             const next = { name: d.name ?? r.name };
             if (db && fns.setDoc && fns.doc) {
-              await fns.setDoc(fns.doc(db, "regions", rid), { ...next, updatedAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date().toISOString() }, { merge: true });
+              await withRetry(() => fns.setDoc(fns.doc(db, "regions", rid), { ...next, updatedAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date().toISOString() }, { merge: true }));
             }
             r.name = next.name;
             renderSettingsContent("一般");
@@ -2241,7 +2242,7 @@ function renderSettingsGeneral() {
           if (!ok) return;
           try {
             if (db && fns.deleteDoc && fns.doc) {
-              await fns.deleteDoc(fns.doc(db, "regions", rid));
+              await withRetry(() => fns.deleteDoc(fns.doc(db, "regions", rid)));
             }
             appState.regions = appState.regions.filter((x) => x.id !== rid);
             renderSettingsContent("一般");
@@ -2266,7 +2267,7 @@ function renderSettingsGeneral() {
       onSubmit: async (d) => {
         try {
           if (!db || !fns.addDoc || !fns.collection) throw new Error("Firestore 未初始化");
-          const docRef = await fns.addDoc(fns.collection(db, "licenses"), { name: d.name || "", createdAt: fns.serverTimestamp() });
+          const docRef = await withRetry(() => fns.addDoc(fns.collection(db, "licenses"), { name: d.name || "", createdAt: fns.serverTimestamp() }));
           appState.licenses.push({ id: docRef.id, name: d.name || "" });
         } catch (err) {
           alert(`儲存證照失敗：${err?.message || err}`);
@@ -2286,7 +2287,7 @@ function renderSettingsGeneral() {
         openModal({ title: "編輯證照", fields: [{ key: "name", label: "名稱", type: "text" }], initial: l, onSubmit: async (d) => {
           try {
             if (!db || !fns.setDoc || !fns.doc) throw new Error("Firestore 未初始化");
-            await fns.setDoc(fns.doc(db, "licenses", lid), { name: d.name || l.name, updatedAt: fns.serverTimestamp() }, { merge: true });
+            await withRetry(() => fns.setDoc(fns.doc(db, "licenses", lid), { name: d.name || l.name, updatedAt: fns.serverTimestamp() }, { merge: true }));
             l.name = d.name || l.name;
           } catch (err) {
             alert(`更新證照失敗：${err?.message || err}`);
@@ -2299,7 +2300,7 @@ function renderSettingsGeneral() {
           if (!ok) return;
           try {
             if (!db || !fns.deleteDoc || !fns.doc) throw new Error("Firestore 未初始化");
-            await fns.deleteDoc(fns.doc(db, "licenses", lid));
+            await withRetry(() => fns.deleteDoc(fns.doc(db, "licenses", lid)));
             appState.licenses = appState.licenses.filter((x) => x.id !== lid);
             renderSettingsContent("一般");
           } catch (err) {
@@ -2369,7 +2370,7 @@ function renderSettingsCommunities() {
         try {
           if (!db || !fns.addDoc || !fns.collection) throw new Error("Firestore 未初始化");
           const payload = { code: d.code || "", name: d.name || "", address: d.address || "", companyId: d.companyId || null, regionId: d.regionId || null, coords: d.coords || "", radiusMeters: d.radiusMeters ?? null, order: (d.order != null ? Number(d.order) : null), createdAt: fns.serverTimestamp() };
-          const docRef = await fns.addDoc(fns.collection(db, "communities"), payload);
+          const docRef = await withRetry(() => fns.addDoc(fns.collection(db, "communities"), payload));
           appState.communities.push({ id: docRef.id, ...payload });
         } catch (err) {
           alert(`儲存社區失敗：${err?.message || err}`);
@@ -2461,7 +2462,7 @@ function renderSettingsCommunities() {
                 order: (d.order != null ? Number(d.order) : (item.order ?? null)),
                 updatedAt: fns.serverTimestamp(),
               };
-              await fns.setDoc(fns.doc(db, "communities", cid), payload, { merge: true });
+              await withRetry(() => fns.setDoc(fns.doc(db, "communities", cid), payload, { merge: true }));
               Object.assign(item, d);
             } catch (err) {
               alert(`更新社區失敗：${err?.message || err}`);
@@ -2519,7 +2520,7 @@ function renderSettingsCommunities() {
           if (!ok) return;
           try {
             if (!db || !fns.deleteDoc || !fns.doc) throw new Error("Firestore 未初始化");
-            await fns.deleteDoc(fns.doc(db, "communities", cid));
+            await withRetry(() => fns.deleteDoc(fns.doc(db, "communities", cid)));
             appState.communities = appState.communities.filter((x) => x.id !== cid);
             renderSettingsContent("社區");
           } catch (err) {
@@ -3066,7 +3067,7 @@ function renderSettingsAccounts() {
           if (!ok) return;
           try {
             if (db && fns.deleteDoc && fns.doc) {
-              await fns.deleteDoc(fns.doc(db, "pendingAccounts", pid));
+              await withRetry(() => fns.deleteDoc(fns.doc(db, "pendingAccounts", pid)));
             }
           } catch (err) {
             console.warn("刪除 Firestore 待審核紀錄失敗：", err);
@@ -3128,19 +3129,17 @@ let ensureFirebasePromise = null;
   if (firebaseInitialized && auth && db) { return; }
   if (ensureFirebasePromise) { return ensureFirebasePromise; }
   ensureFirebasePromise = (async () => {
-    const [
-      { initializeApp },
-      { getAuth, onAuthStateChanged, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, signInAnonymously },
-      { getFirestore, doc, getDoc, setDoc, addDoc, collection, getDocs, deleteDoc, updateDoc, serverTimestamp, query, where, orderBy, limit }
-    ] = await Promise.all([
-      import("https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js"),
-      import("https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js"),
-      import("https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-lite.js"),
-    ]);
+    const importWithRetry = async (url) => withRetry(() => import(url));
+    const appMod = await importWithRetry("https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js");
+    const authMod = await importWithRetry("https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js");
+    const fsMod = await importWithRetry("https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-lite.js");
+    const { initializeApp } = appMod;
+    const { getAuth, onAuthStateChanged, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, signInAnonymously } = authMod;
+    const { getFirestore, doc, getDoc, setDoc, addDoc, collection, getDocs, deleteDoc, updateDoc, serverTimestamp, query, where, orderBy, limit } = fsMod;
     let getFunctions = null;
     let httpsCallable = null;
     try {
-      const mod = await import("https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js");
+      const mod = await importWithRetry("https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js");
       getFunctions = mod.getFunctions;
       httpsCallable = mod.httpsCallable;
     } catch (err) {
@@ -3237,12 +3236,12 @@ let ensureFirebasePromise = null;
                 if (userPhotoEl) userPhotoEl.src = photoFromDoc;
                 if (homeHeroPhoto) homeHeroPhoto.src = photoFromDoc;
               }
-              await setDoc(userDocRef, { ...data, uid: user.uid }, { merge: true });
+              await withRetry(() => setDoc(userDocRef, { ...data, uid: user.uid }, { merge: true }));
             } else {
-              await setDoc(userDocRef, { role, name: user.displayName || "使用者", email: user.email || "", createdAt: serverTimestamp() });
+              await withRetry(() => setDoc(userDocRef, { role, name: user.displayName || "使用者", email: user.email || "", createdAt: serverTimestamp() }));
             }
           } catch (_) {
-            await setDoc(userDocRef, { role, name: user.displayName || "使用者", email: user.email || "", createdAt: serverTimestamp() });
+            await withRetry(() => setDoc(userDocRef, { role, name: user.displayName || "使用者", email: user.email || "", createdAt: serverTimestamp() }));
           }
         }
       } catch (err) {
@@ -3408,7 +3407,7 @@ let ensureFirebasePromise = null;
           };
           let saved = false;
           if (db && fns.addDoc && fns.collection) {
-            try { await fns.addDoc(fns.collection(db, 'leaveRequests'), payload); saved = true; } catch {}
+            try { await withRetry(() => fns.addDoc(fns.collection(db, 'leaveRequests'), payload)); saved = true; } catch {}
           }
           if (!saved) {
             const p2 = { ...payload };
@@ -3521,7 +3520,7 @@ let ensureFirebasePromise = null;
             createdAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date().toISOString(),
           };
           if (db && fns.addDoc && fns.collection) {
-            await fns.addDoc(fns.collection(db, 'makeupRequests'), payload);
+            await withRetry(() => fns.addDoc(fns.collection(db, 'makeupRequests'), payload));
           }
           alert('已送出補卡申請');
           return true;
@@ -3809,6 +3808,35 @@ function applyPagePermissionsForUser(user) {
     const tabs = SUB_TABS[mainTab] || [];
     subTabsEl.innerHTML = "";
     if (!tabs.length) return;
+    if (mainTab === 'leader') {
+      const sel = document.createElement('select');
+      sel.className = 'subtab-select';
+      sel.id = 'leaderCompanySelect';
+      const companies = Array.isArray(appState.companies) ? appState.companies : [];
+      const me = appState.accounts.find((a) => a.id === appState.currentUserId) || null;
+      const meCompanyIds = Array.isArray(me?.companyIds) ? me.companyIds : (me?.companyId ? [me.companyId] : []);
+      const onlyOne = meCompanyIds.length === 1 ? meCompanyIds[0] : null;
+      if (companies.length) {
+        companies.forEach((co) => {
+          const opt = document.createElement('option');
+          opt.value = co.id;
+          opt.textContent = co.name || co.id;
+          sel.appendChild(opt);
+        });
+      }
+      if (onlyOne) {
+        appState.leaderCompanyFilter = onlyOne;
+        sel.value = onlyOne;
+        sel.disabled = true;
+      } else if (appState.leaderCompanyFilter) {
+        sel.value = appState.leaderCompanyFilter;
+      }
+      sel.addEventListener('change', () => {
+        appState.leaderCompanyFilter = sel.value || null;
+        setActiveSubTab(activeSubTab);
+      });
+      subTabsEl.appendChild(sel);
+    }
     tabs.forEach((label, idx) => {
       const btn = document.createElement("button");
       btn.className = "subtab-btn";
@@ -4219,7 +4247,13 @@ function applyPagePermissionsForUser(user) {
       if (info) info.textContent = `日期：${dateStr}`;
       const sel = document.getElementById("rosterOfficerSelect");
       if (sel) {
-        const officers = appState.accounts.filter((a) => (a.role || "").includes("主管") || (a.role || "").includes("管理"));
+        const coId = appState.leaderCompanyFilter || null;
+        const officers = appState.accounts.filter((a) => {
+          const isOfficer = (a.role || "").includes("主管") || (a.role || "").includes("管理");
+          if (!coId) return isOfficer;
+          const ids = Array.isArray(a.companyIds) ? a.companyIds : (a.companyId ? [a.companyId] : []);
+          return isOfficer && ids.includes(coId);
+        });
         const opts = officers.length ? officers : appState.accounts.slice(0, 10);
         opts.forEach((a) => {
           const opt = document.createElement("option");
@@ -4408,15 +4442,15 @@ function applyPagePermissionsForUser(user) {
         });
       }
 
-      const ref = collection(db, "checkins");
-      const docRef = await addDoc(ref, {
+      const ref = fns.collection(db, "checkins");
+      const docRef = await withRetry(() => fns.addDoc(ref, {
         uid: user.uid,
         name: user.displayName || user.email || "使用者",
         role,
         lat: lat ?? null,
         lng: lng ?? null,
-        createdAt: serverTimestamp(),
-      });
+        createdAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date().toISOString(),
+      }));
       if (checkinResult) checkinResult.textContent = `打卡成功：${docRef.id}`;
     } catch (err) {
       if (checkinResult) checkinResult.textContent = `打卡失敗：${err?.message || err}`;
@@ -4887,12 +4921,12 @@ try {
     if (db && fns.setDoc && fns.doc) {
       const did = getDeviceId();
       if (did) {
-        await fns.setDoc(fns.doc(db, 'devices', did), {
+        await withRetry(() => fns.setDoc(fns.doc(db, 'devices', did), {
           model: getLocalDeviceModel(),
           ua: navigator.userAgent || '',
           platform: (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '',
           updatedAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date().toISOString(),
-        }, { merge: true });
+        }, { merge: true }));
       }
     }
   } catch {}
@@ -4918,7 +4952,7 @@ try {
       if ((statusKey === 'out' || statusKey === 'arrive' || statusKey === 'leave') && selectedLocation && selectedLocation.reason) { payload.reason = selectedLocation.reason; }
       let saved = false;
       if (db && fns.addDoc && fns.collection) {
-        try { await fns.addDoc(fns.collection(db, "checkins"), payload); saved = true; } catch {}
+        try { await withRetry(() => fns.addDoc(fns.collection(db, "checkins"), payload)); saved = true; } catch {}
       }
       if (!saved) {
         try {
@@ -5196,7 +5230,7 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
                         createdAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date().toISOString(),
                       };
                       if (db && fns.addDoc && fns.collection) {
-                        await fns.addDoc(fns.collection(db, 'changeRequests'), payload);
+                        await withRetry(() => fns.addDoc(fns.collection(db, 'changeRequests'), payload));
                       }
                       alert('已送出修改申請');
                       return true;
@@ -5384,7 +5418,7 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
                         }
                       }
                       if (db && fns.updateDoc && fns.doc) {
-                        await fns.updateDoc(fns.doc(db, 'leaveRequests', r.id), payload);
+                        await withRetry(() => fns.updateDoc(fns.doc(db, 'leaveRequests', r.id), payload));
                       }
                       try {
                         const idx = list.findIndex((x) => x.id === r.id);
@@ -5460,7 +5494,7 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
                 try {
                   await ensureFirebase();
                   if (db && fns.deleteDoc && fns.doc) {
-                    await fns.deleteDoc(fns.doc(db, 'leaveRequests', r.id));
+                    await withRetry(() => fns.deleteDoc(fns.doc(db, 'leaveRequests', r.id)));
                   }
                   try {
                     const idx = list.findIndex((x) => x.id === r.id);
@@ -5549,7 +5583,7 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
                     let record = null;
                     if (db && fns.addDoc && fns.collection) {
                       try {
-                        const docRef = await fns.addDoc(fns.collection(db, 'leaveRequests'), payload);
+                        const docRef = await withRetry(() => fns.addDoc(fns.collection(db, 'leaveRequests'), payload));
                         saved = true;
                         const sdt = payload.startAt ? new Date(payload.startAt) : null;
                         const edt = payload.endAt ? new Date(payload.endAt) : null;
@@ -5590,6 +5624,125 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
                   }
                 } catch {}
               },
+            });
+          });
+        } catch (e) {
+          const msg = e?.message || e;
+          container.textContent = typeof msg === 'string' ? `載入失敗：${msg}` : "載入失敗";
+        }
+      })();
+      return;
+    }
+    if (label === "計點") {
+      (async () => {
+        try {
+          await ensureFirebase();
+          const user = auth?.currentUser || null;
+          if (!user) { container.textContent = "請先登入"; return; }
+          const ref = fns.collection(db, "checkins");
+          const q2 = fns.query(ref, fns.where("uid", "==", user.uid));
+          const snap = await fns.getDocs(q2);
+          const records = [];
+          snap.forEach((doc) => {
+            const data = doc.data() || {};
+            let created = data.createdAt;
+            let dt = null;
+            if (created && typeof created.toDate === 'function') dt = created.toDate(); else if (typeof created === 'string') dt = new Date(created);
+            if (!dt) dt = new Date();
+            records.push({ id: doc.id, ...data, dt });
+          });
+          let rules = appState.pointsRules || [];
+          try {
+            const rref = fns.collection(db, 'pointsRules');
+            const rsnap = await fns.getDocs(rref);
+            const list = [];
+            rsnap.forEach((doc) => { const d = doc.data() || {}; list.push({ id: doc.id, ...d }); });
+            rules = list;
+            appState.pointsRules = list;
+          } catch {}
+          const html = `
+            <div class="block" id="block-checkin-points">
+              <div class="block-header"><span class="block-title">計點列表</span><div class="block-actions"><span id="pointsMonthTotal">本月總計：0</span></div></div>
+              <div class="table-wrapper">
+                <table class="table" aria-label="計點列表">
+                  <thead>
+                    <tr>
+                      <th>日期</th>
+                      <th>事由</th>
+                      <th>狀態</th>
+                      <th>計點</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="checkinPointsTbody"></tbody>
+                </table>
+              </div>
+            </div>`;
+          container.innerHTML = html;
+          const tbody = container.querySelector('#checkinPointsTbody');
+          const calcPoints = (rec) => {
+            const statusFlag = (rec.inRadius === true) ? '正常' : '異常';
+            const statusText = String(rec.status || '').trim();
+            const baseStatus = statusText.split('-')[0];
+            const reason = baseStatus || statusText;
+            const found = rules.find((r) => String(r.reason||'') === reason && String(r.status||'') === statusFlag) || null;
+            return { statusFlag, reason, points: found ? Number(found.points || 0) : 0 };
+          };
+          if (tbody) {
+            const formatDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+            const rows = records.sort((a,b)=>b.dt - a.dt).map((rec) => {
+              const { statusFlag, reason, points } = calcPoints(rec);
+              return `<tr data-id="${rec.id}"><td>${formatDate(rec.dt)}</td><td>${reason}</td><td>${statusFlag}</td><td>${points}</td><td class="cell-actions"><button class="btn btn-orange" data-act="appeal">申訴</button></td></tr>`;
+            }).join('');
+            tbody.innerHTML = rows;
+          }
+          try {
+            const mEl = container.querySelector('#pointsMonthTotal');
+            const tzNow = nowInTZ('Asia/Taipei');
+            const y = tzNow.getFullYear();
+            const m = tzNow.getMonth();
+            const start = new Date(y, m, 1);
+            const end = new Date(y, m + 1, 1);
+            const total = records.reduce((sum, rec) => {
+              if (rec.dt >= start && rec.dt < end) {
+                const { points } = calcPoints(rec);
+                return sum + (Number(points) || 0);
+              }
+              return sum;
+            }, 0);
+            if (mEl) mEl.textContent = `本月總計：${total}`;
+          } catch {}
+          const table = container.querySelector('#block-checkin-points table');
+          table?.addEventListener('click', async (e) => {
+            const t = e.target;
+            if (!(t instanceof HTMLElement)) return;
+            const act = t.dataset.act || '';
+            if (act !== 'appeal') return;
+            const tr = t.closest('tr');
+            const idv = tr?.getAttribute('data-id') || '';
+            const rec = records.find((x) => x.id === idv);
+            if (!rec) return;
+            const { statusFlag, reason, points } = calcPoints(rec);
+            openModal({
+              title: '提出申訴',
+              fields: [
+                { key: 'appealText', label: '申訴說明', type: 'text', placeholder: '請描述理由' },
+              ],
+              submitText: '送出',
+              refreshOnSubmit: false,
+              onSubmit: async (data) => {
+                try {
+                  await ensureFirebase();
+                  const u = auth?.currentUser || null;
+                  const payload = { uid: u?.uid || null, checkinId: rec.id, reason: reason || '', status: statusFlag, points, appealText: String(data.appealText || ''), createdAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date().toISOString(), state: '送審' };
+                  if (db && fns.addDoc && fns.collection) { await withRetry(() => fns.addDoc(fns.collection(db, 'pointAppeals'), payload)); }
+                  t.textContent = '已申訴'; t.disabled = true;
+                  return true;
+                } catch (e) {
+                  alert(`申訴失敗：${e?.message || e}`);
+                  return false;
+                }
+              }
             });
           });
         } catch (e) {
@@ -5728,7 +5881,7 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
 function renderSettingsRules() {
   settingsContent.innerHTML = `
     <div class="block" id="block-rules">
-      <div class="block-header"><span class="block-title">計點列表</span></div>
+      <div class="block-header"><span class="block-title">計點列表</span><div class="block-actions"><button id="btnAddRule" class="btn">新增</button></div></div>
       <div class="table-wrapper">
         <table class="table" aria-label="計點列表">
           <thead>
@@ -5746,6 +5899,52 @@ function renderSettingsRules() {
     </div>`;
   const table = settingsContent.querySelector('#block-rules table');
   const tbody = settingsContent.querySelector('#rulesTbody');
+  const addBtn = settingsContent.querySelector('#btnAddRule');
+  const role = appState.currentUserRole || '一般';
+  const isAdmin = role === '系統管理員';
+  if (!isAdmin) {
+    try {
+      addBtn?.parentElement?.removeChild(addBtn);
+      const thOps = table?.querySelector('thead tr th:last-child');
+      thOps?.parentElement?.removeChild(thOps);
+    } catch {}
+  }
+  if (addBtn) {
+    attachPressInteractions(addBtn);
+    addBtn.addEventListener('click', () => {
+      openModal({
+        title: '新增計點規則',
+        fields: [
+          { key: 'reason', label: '事由', type: 'text' },
+          { key: 'handle', label: '處理', type: 'text' },
+          { key: 'status', label: '狀態', type: 'select', options: [ { value: '正常', label: '正常' }, { value: '異常', label: '異常' } ] },
+          { key: 'points', label: '計點', type: 'number', step: 1 },
+        ],
+        initial: { status: '正常', points: 0 },
+        submitText: '新增',
+        refreshOnSubmit: false,
+        onSubmit: async (data) => {
+          try {
+            await ensureFirebase();
+            const payload = { reason: String(data.reason || ''), handle: String(data.handle || ''), status: String(data.status || '正常'), points: (data.points != null ? Number(data.points) : 0) };
+            let docId = null;
+            if (db && fns.addDoc && fns.collection) {
+              const docRef = await withRetry(() => fns.addDoc(fns.collection(db, 'pointsRules'), payload));
+              docId = docRef.id;
+            }
+            if (!docId) throw new Error('新增失敗');
+            const rowHtml = `<tr data-id="${docId}"><td>${payload.reason}</td><td>${payload.handle}</td><td>${payload.status}</td><td>${payload.points}</td><td class="cell-actions"><button class="btn" data-act="edit">編輯</button><button class="btn" data-act="del">刪除</button></td></tr>`;
+            appState.pointsRules.unshift({ id: docId, ...payload });
+            if (tbody) tbody.insertAdjacentHTML('afterbegin', rowHtml);
+            return true;
+          } catch (e) {
+            alert(`新增失敗：${e?.message || e}`);
+            return false;
+          }
+        }
+      });
+    });
+  }
   (async () => {
     try {
       await ensureFirebase();
@@ -5761,18 +5960,20 @@ function renderSettingsRules() {
       }).join('');
     }
   })();
-  if (!table) return;
-  table.addEventListener('click', async (e) => {
-    const t = e.target;
-    if (!(t instanceof HTMLElement)) return;
-    const act = t.dataset.act || '';
-    if (!act) return;
-    const tr = t.closest('tr');
-    const idv = tr?.getAttribute('data-id') || '';
-    const idx = appState.pointsRules.findIndex((x) => x.id === idv);
-    if (idx < 0) return;
-    const r = appState.pointsRules[idx];
+    if (!table) return;
+    table.addEventListener('click', async (e) => {
+      const t = e.target;
+      if (!(t instanceof HTMLElement)) return;
+      const act = t.dataset.act || '';
+      if (!act) return;
+      if (!isAdmin && act !== 'edit' && act !== 'del') return;
+      const tr = t.closest('tr');
+      const idv = tr?.getAttribute('data-id') || '';
+      const idx = appState.pointsRules.findIndex((x) => x.id === idv);
+      if (idx < 0) return;
+      const r = appState.pointsRules[idx];
     if (act === 'edit') {
+      if (!isAdmin) { alert('權限不足：只有系統管理員可以編輯規則。'); return; }
       openModal({
         title: '編輯計點規則',
         fields: [
@@ -5787,7 +5988,7 @@ function renderSettingsRules() {
           try {
             await ensureFirebase();
             const payload = { reason: String(data.reason || ''), handle: String(data.handle || ''), status: String(data.status || '正常'), points: (data.points != null ? Number(data.points) : 0) };
-            if (db && fns.updateDoc && fns.doc) { await fns.updateDoc(fns.doc(db, 'pointsRules', r.id), payload); }
+            if (db && fns.updateDoc && fns.doc) { await withRetry(() => fns.updateDoc(fns.doc(db, 'pointsRules', r.id), payload)); }
             appState.pointsRules[idx] = { ...r, ...payload };
             const rowHtml = `<td>${payload.reason}</td><td>${payload.handle}</td><td>${payload.status}</td><td>${payload.points}</td><td class="cell-actions"><button class="btn" data-act="edit">編輯</button><button class="btn" data-act="del">刪除</button></td>`;
             tr.innerHTML = rowHtml;
@@ -5799,11 +6000,12 @@ function renderSettingsRules() {
         }
       });
     } else if (act === 'del') {
+      if (!isAdmin) { alert('權限不足：只有系統管理員可以刪除規則。'); return; }
       const ok = await confirmAction({ title: '確認刪除', text: '確定要刪除這筆規則嗎？', confirmText: '刪除' });
       if (!ok) return;
       try {
         await ensureFirebase();
-        if (db && fns.deleteDoc && fns.doc) { await fns.deleteDoc(fns.doc(db, 'pointsRules', r.id)); }
+        if (db && fns.deleteDoc && fns.doc) { await withRetry(() => fns.deleteDoc(fns.doc(db, 'pointsRules', r.id))); }
         appState.pointsRules.splice(idx, 1);
         tr?.parentElement?.removeChild(tr);
       } catch (e) {

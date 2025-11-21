@@ -93,10 +93,18 @@ service cloud.firestore {
       );
     }
 
-    // 計點規則：僅管理員可讀寫
+    // 計點規則：所有登入者可讀；僅管理員可寫
     match /pointsRules/{docId} {
-      allow read: if isAdmin();
+      allow read: if isLoggedIn() || isAdmin();
       allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // 計點申訴：本人可建立與讀取（僅本人或管理員）；管理員可讀寫刪除
+    match /pointAppeals/{docId} {
+      allow read: if isAdmin() || (isLoggedIn() && resource.data.uid == request.auth.uid);
+      allow create: if isLoggedIn() && request.resource.data.uid == request.auth.uid && request.resource.data.state == '送審';
       allow update: if isAdmin();
       allow delete: if isAdmin();
     }
