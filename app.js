@@ -1627,7 +1627,7 @@ async function importAccountsFromXLSX(file) {
                 try {
                   const qU = fns.query(fns.collection(db, "users"), fns.where("email", "==", normEmail), fns.limit(1));
                   const qP = fns.query(fns.collection(db, "pendingAccounts"), fns.where("email", "==", normEmail), fns.limit(1));
-                  const [sU, sP] = await Promise.all([fns.getDocs(qU), fns.getDocs(qP)]);
+                  const [sU, sP] = await Promise.all([withRetry(() => fns.getDocs(qU)), withRetry(() => fns.getDocs(qP))]);
                   if (!sU.empty || !sP.empty) { alert("電子郵件已申請過"); return false; }
                 } catch {}
               }
@@ -1635,7 +1635,7 @@ async function importAccountsFromXLSX(file) {
                 try {
                   const qU2 = fns.query(fns.collection(db, "users"), fns.where("phone", "==", normPhone), fns.limit(1));
                   const qP2 = fns.query(fns.collection(db, "pendingAccounts"), fns.where("phone", "==", normPhone), fns.limit(1));
-                  const [sU2, sP2] = await Promise.all([fns.getDocs(qU2), fns.getDocs(qP2)]);
+                  const [sU2, sP2] = await Promise.all([withRetry(() => fns.getDocs(qU2)), withRetry(() => fns.getDocs(qP2))]);
                   if (!sU2.empty || !sP2.empty) { alert("手機號碼已申請過"); return false; }
                 } catch {}
               }
@@ -3204,7 +3204,7 @@ let ensureFirebasePromise = null;
       const userDocRef = doc(db, "users", user.uid);
       let role = "一般";
       try {
-        const userSnap = await getDoc(userDocRef);
+          const userSnap = await withRetry(() => getDoc(userDocRef));
         if (userSnap.exists()) {
           const data = userSnap.data();
           role = data.role || role;
@@ -3222,7 +3222,7 @@ let ensureFirebasePromise = null;
         } else {
           try {
             const q = query(collection(db, "users"), where("email", "==", user.email || ""));
-            const qs = await getDocs(q);
+            const qs = await withRetry(() => getDocs(q));
             let found = null;
             qs.forEach((d) => { if (!found) found = d; });
             if (found) {
@@ -3546,7 +3546,7 @@ let ensureFirebasePromise = null;
   async function loadAccountsFromFirestore() {
     if (!db || !fns.getDocs || !fns.collection) return;
     try {
-      const snap = await fns.getDocs(fns.collection(db, "users"));
+      const snap = await withRetry(() => fns.getDocs(fns.collection(db, "users")));
       const items = [];
       snap.forEach((docSnap) => {
         const d = docSnap.data() || {};
@@ -3606,7 +3606,7 @@ let ensureFirebasePromise = null;
   async function loadCompaniesFromFirestore() {
     if (!db || !fns.getDocs || !fns.collection) return;
     try {
-      const snap = await fns.getDocs(fns.collection(db, "companies"));
+      const snap = await withRetry(() => fns.getDocs(fns.collection(db, "companies")));
       const items = [];
       snap.forEach((docSnap) => {
         const d = docSnap.data() || {};
@@ -3624,7 +3624,7 @@ let ensureFirebasePromise = null;
   async function loadRegionsFromFirestore() {
     if (!db || !fns.getDocs || !fns.collection) return;
     try {
-      const snap = await fns.getDocs(fns.collection(db, "regions"));
+      const snap = await withRetry(() => fns.getDocs(fns.collection(db, "regions")));
       const items = [];
       snap.forEach((docSnap) => {
         const d = docSnap.data() || {};
@@ -3641,7 +3641,7 @@ let ensureFirebasePromise = null;
   async function loadLicensesFromFirestore() {
     if (!db || !fns.getDocs || !fns.collection) return;
     try {
-      const snap = await fns.getDocs(fns.collection(db, "licenses"));
+      const snap = await withRetry(() => fns.getDocs(fns.collection(db, "licenses")));
       const items = [];
       snap.forEach((docSnap) => {
         const d = docSnap.data() || {};
@@ -3659,7 +3659,7 @@ let ensureFirebasePromise = null;
   async function loadCommunitiesFromFirestore() {
     if (!db || !fns.getDocs || !fns.collection) return;
     try {
-      const snap = await fns.getDocs(fns.collection(db, "communities"));
+      const snap = await withRetry(() => fns.getDocs(fns.collection(db, "communities")));
       const items = [];
       snap.forEach((docSnap) => {
         const d = docSnap.data() || {};
@@ -3700,7 +3700,7 @@ let ensureFirebasePromise = null;
       if (role !== "系統管理員" && appState.currentUserEmail) {
         q = fns.query(q, fns.where("email", "==", appState.currentUserEmail));
       }
-      const snap = await fns.getDocs(q);
+      const snap = await withRetry(() => fns.getDocs(q));
       const items = [];
       snap.forEach((docSnap) => {
         const d = docSnap.data() || {};
@@ -5024,7 +5024,7 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
           const ref = fns.collection(db, "checkins");
           const q2 = fns.query(ref, fns.where("uid", "==", user.uid));
           isLoadingCheckins = true;
-          const snap = await fns.getDocs(q2);
+          const snap = await withRetry(() => fns.getDocs(q2));
         const tzNow = nowInTZ('Asia/Taipei');
         const list = [];
         snap.forEach((doc) => {
@@ -5044,7 +5044,7 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
           if (deviceIds.length && db && fns.getDoc && fns.doc) {
             await Promise.all(deviceIds.map(async (id) => {
               try {
-                const ds = await fns.getDoc(fns.doc(db, 'devices', id));
+                const ds = await withRetry(() => fns.getDoc(fns.doc(db, 'devices', id)));
                 if (ds.exists()) {
                   const dvm = ds.data();
                   const name = String(dvm.model || dvm.name || '').trim();
@@ -5273,7 +5273,7 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
           const tzNow = nowInTZ('Asia/Taipei');
           const ref = fns.collection(db, "leaveRequests");
           const q = fns.query(ref, fns.where("uid", "==", user.uid));
-          const snap = await fns.getDocs(q);
+          const snap = await withRetry(() => fns.getDocs(q));
           const list = [];
           snap.forEach((doc) => {
             try {
@@ -5641,7 +5641,7 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
           if (!user) { container.textContent = "請先登入"; return; }
           const ref = fns.collection(db, "checkins");
           const q2 = fns.query(ref, fns.where("uid", "==", user.uid));
-          const snap = await fns.getDocs(q2);
+          const snap = await withRetry(() => fns.getDocs(q2));
           const records = [];
           snap.forEach((doc) => {
             const data = doc.data() || {};
@@ -5654,7 +5654,7 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
           let rules = appState.pointsRules || [];
           try {
             const rref = fns.collection(db, 'pointsRules');
-            const rsnap = await fns.getDocs(rref);
+            const rsnap = await withRetry(() => fns.getDocs(rref));
             const list = [];
             rsnap.forEach((doc) => { const d = doc.data() || {}; list.push({ id: doc.id, ...d }); });
             rules = list;
@@ -5949,7 +5949,7 @@ function renderSettingsRules() {
     try {
       await ensureFirebase();
       const ref = fns.collection(db, 'pointsRules');
-      const snap = await fns.getDocs(ref);
+      const snap = await withRetry(() => fns.getDocs(ref));
       const list = [];
       snap.forEach((doc) => { const data = doc.data() || {}; list.push({ id: doc.id, ...data }); });
       appState.pointsRules = list;
