@@ -208,7 +208,7 @@ function renderHomeStatusText(str) {
     const locText = m ? (m[2] || "") : "";
     const nameText = (homeHeaderNameEl?.textContent || '').replace(/^歡迎~\s*/, '') || '';
     el.style.textAlign = "center";
-    el.innerHTML = `<div>${dateText}${nameText ? ` ${nameText}` : ''}</div><div>${nameText ? `${nameText} ` : ''}${locText ? `<span class="status-label ${statusCls}">${locText}</span> ` : ""}<span class="status-label ${statusCls}">${status}</span> <span class="status-flag ${flagCls}">${flag}</span></div>`;
+    el.innerHTML = `<div>${dateText}</div><div>${nameText ? `${nameText} ` : ''}${locText ? `<span class="status-label ${statusCls}">${locText}</span> ` : ""}<span class="status-label ${statusCls}">${status}</span> <span class="status-flag ${flagCls}">${flag}</span></div>`;
   } else {
     el.textContent = s;
   }
