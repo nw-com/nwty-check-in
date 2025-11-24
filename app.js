@@ -111,25 +111,21 @@ function updateHomeMap() {
 
 function two(n) { return n < 10 ? "0" + n : "" + n; }
 async function initNetworkTime() {
+  if (navigator.onLine === false) { appState.networkTimeOk = false; appState.timeOffsetMs = 0; return; }
   let ok = false;
   try {
-    const res2 = await fetch('https://timeapi.io/api/Time/current/zone?timeZone=Asia/Taipei', { cache: 'no-store' });
+    const c2 = new AbortController();
+    const t2 = setTimeout(() => { try { c2.abort(); } catch {} }, 5000);
+    let res2;
+    try {
+      res2 = await fetch('https://timeapi.io/api/Time/current/zone?timeZone=Asia/Taipei', { cache: 'no-store', signal: c2.signal });
+    } finally { clearTimeout(t2); }
     if (!res2.ok) throw new Error('time api 2');
     const j2 = await res2.json();
     const netStr = `${j2.date}T${j2.time}`;
     const netUtc2 = Date.parse(netStr);
     if (!isNaN(netUtc2)) { appState.timeOffsetMs = netUtc2 - Date.now(); ok = true; }
   } catch {}
-  if (!ok) {
-    try {
-      const res = await fetch('https://worldtimeapi.org/api/timezone/Asia/Taipei', { cache: 'no-store' });
-      if (!res.ok) throw new Error('time api');
-      const j = await res.json();
-      const netUtc = Date.parse(j.utc_datetime);
-      appState.timeOffsetMs = netUtc - Date.now();
-      ok = true;
-    } catch {}
-  }
   appState.networkTimeOk = !!ok;
   if (!ok) { appState.timeOffsetMs = 0; }
 }
@@ -191,7 +187,8 @@ function updateHomeClockOnce() {
   if (homeTimeEl) homeTimeEl.textContent = `${two(now.getHours())}:${two(now.getMinutes())}:${two(now.getSeconds())}`;
   if (homeDateEl) homeDateEl.textContent = `${formatDateYYYYMMDD(now)} (${weekdayZH(now)})`;
 }
-function startHomeClock() {
+async function startHomeClock() {
+  try { await ensureNetworkTime(); } catch {}
   stopHomeClock();
   updateHomeClockOnce();
   homeClockTimer = setInterval(updateHomeClockOnce, 1000);
@@ -4379,6 +4376,12 @@ function applyPagePermissionsForUser(user) {
             const id1 = String(a.id||''); if (id1) nameByUid.set(id1, nm);
             const id2 = String(a.uid||''); if (id2) nameByUid.set(id2, nm);
           });
+          const nameByUid2 = new Map();
+          targets.forEach((a) => {
+            const nm = a.name || a.email || '使用者';
+            const id1 = String(a.id||''); if (id1) nameByUid2.set(id1, nm);
+            const id2 = String(a.uid||''); if (id2) nameByUid2.set(id2, nm);
+          });
           const uids = targets.map((a) => a.uid || a.id).filter(Boolean).map(String);
           const ref = fns.collection(db, "checkins");
           const chunks = []; for (let i = 0; i < uids.length; i += 10) chunks.push(uids.slice(i, i + 10));
@@ -4493,6 +4496,7 @@ function applyPagePermissionsForUser(user) {
             container.innerHTML = `
               <div class="roster-datebar">
                 <label for="leaderLeaveMonth">月份：</label>
+                <select id="leaderLeaveNameFilter" class="input"><option value="">全部</option></select>
                 <input id="leaderLeaveMonth" type="month" />
               </div>
               <div id="leaderLeaveList">該公司無請假項目</div>
@@ -4534,10 +4538,14 @@ function applyPagePermissionsForUser(user) {
           container.innerHTML = `
             <div class="roster-datebar">
               <label for="leaderLeaveMonth">月份：</label>
+              <select id="leaderLeaveNameFilter" class="input"></select>
               <input id="leaderLeaveMonth" type="month" />
             </div>
             <div id="leaderLeaveList"></div>
           `;
+          const nameFilter = container.querySelector('#leaderLeaveNameFilter');
+          const nameOptions = [{ value: '', label: '全部' }].concat(targets.map((a) => ({ value: String(a.uid || a.id || ''), label: a.name || a.email || '使用者' })));
+          if (nameFilter) { nameFilter.innerHTML = nameOptions.map((o) => `<option value="${o.value}">${o.label}</option>`).join(''); }
           const monthInput = container.querySelector('#leaderLeaveMonth');
           const listRoot = container.querySelector('#leaderLeaveList');
           if (!monthInput || !listRoot) return;
@@ -4551,9 +4559,12 @@ function applyPagePermissionsForUser(user) {
             const m = Number(parts[1]) - 1;
             const start = new Date(y, m, 1);
             const end = new Date(y, m + 1, 1);
+            const selUid = String(nameFilter?.value || '').trim();
             const monthList = list.filter((r) => {
               const base = r.sdt instanceof Date && !isNaN(r.sdt) ? r.sdt : r.dt;
-              return base >= start && base < end;
+              const inMonth = base >= start && base < end;
+              const byName = !selUid || String(r.uid||'') === selUid;
+              return inMonth && byName;
             }).sort((a, b) => b.dt - a.dt);
             listRoot.innerHTML = '';
             if (!monthList.length) { listRoot.textContent = '該月無請假項目'; return; }
@@ -4563,6 +4574,7 @@ function applyPagePermissionsForUser(user) {
               card.style.display = 'grid';
               card.style.gridTemplateColumns = '1fr';
               card.style.gap = '8px';
+              card.setAttribute('data-id', r.id);
               const status = document.createElement('div');
               const nameText = r.name || '使用者';
               const typeText = r.type || '請假';
@@ -4574,13 +4586,108 @@ function applyPagePermissionsForUser(user) {
               const when = document.createElement('div');
               const dtStr = `${r.dt.getFullYear()}-${String(r.dt.getMonth()+1).padStart(2,'0')}-${String(r.dt.getDate()).padStart(2,'0')} ${String(r.dt.getHours()).padStart(2,'0')}:${String(r.dt.getMinutes()).padStart(2,'0')}:${String(r.dt.getSeconds()).padStart(2,'0')}`;
               when.textContent = `建立：${dtStr}`;
+              const actions = document.createElement('div');
+              actions.className = 'record-actions';
+              const isAdmin = String(appState.currentUserRole||'') === '系統管理員';
+              const curUid = auth?.currentUser?.uid || '';
+              const isSelf = curUid && String(r.uid||'') === String(curUid);
+              const photoBtn = document.createElement('button');
+              photoBtn.className = 'btn btn-darkgrey';
+              photoBtn.textContent = '照片';
+              photoBtn.dataset.act = 'photo';
+              photoBtn.dataset.id = r.id;
+              photoBtn.disabled = !r.attachmentData;
+              const approveBtn = document.createElement('button');
+              approveBtn.className = (r.status && r.status !== '送審') ? 'btn btn-grey' : 'btn btn-green';
+              approveBtn.textContent = '核准'; approveBtn.dataset.act = 'approve'; approveBtn.dataset.id = r.id;
+              approveBtn.disabled = !isAdmin || (r.status && r.status !== '送審');
+              const rejectBtn = document.createElement('button');
+              rejectBtn.className = (r.status && r.status !== '送審') ? 'btn btn-grey' : 'btn btn-darkred';
+              rejectBtn.textContent = '拒絕'; rejectBtn.dataset.act = 'reject'; rejectBtn.dataset.id = r.id;
+              rejectBtn.disabled = !isAdmin || (r.status && r.status !== '送審');
+              const editBtn = document.createElement('button'); editBtn.className = 'btn btn-blue'; editBtn.textContent = '編輯'; editBtn.dataset.act = 'edit'; editBtn.dataset.id = r.id; editBtn.disabled = !isAdmin;
+              const canDelete = isAdmin || (isSelf && st !== '核准');
+              const deleteBtn = document.createElement('button'); deleteBtn.className = 'btn btn-red'; deleteBtn.textContent = '刪除'; deleteBtn.dataset.act = 'delete'; deleteBtn.dataset.id = r.id; deleteBtn.disabled = !canDelete;
+              actions.appendChild(photoBtn);
+              actions.appendChild(approveBtn);
+              actions.appendChild(rejectBtn);
+              actions.appendChild(editBtn);
+              actions.appendChild(deleteBtn);
               card.appendChild(status);
               card.appendChild(when);
+              card.appendChild(actions);
               listRoot.appendChild(card);
             });
           }
           renderForMonth(todayYm);
           monthInput.addEventListener('change', () => renderForMonth(monthInput.value));
+          nameFilter?.addEventListener('change', () => renderForMonth(monthInput.value));
+          listRoot.addEventListener('click', async (e) => {
+            const btn = e.target.closest('button');
+            if (!btn) return;
+            const act = btn.dataset.act || '';
+            const id = btn.dataset.id || '';
+            const rec = list.find((x) => x.id === id);
+            if (!rec) return;
+            const isAdmin = String(appState.currentUserRole||'') === '系統管理員';
+            try {
+              await ensureFirebase();
+              if (act === 'photo') {
+                if (!rec.attachmentData) { alert('此申請沒有上傳照片'); return; }
+                openModal({
+                  title: '上傳照片',
+                  fields: [],
+                  submitText: '',
+                  afterRender: ({ body }) => {
+                    try {
+                      const img = document.createElement('img');
+                      img.src = rec.attachmentData;
+                      img.alt = '上傳照片';
+                      img.style.maxWidth = '100%';
+                      img.style.height = 'auto';
+                      img.style.borderRadius = '8px';
+                      body.appendChild(img);
+                    } catch {}
+                  },
+                  refreshOnSubmit: false,
+                });
+              } else if (act === 'approve' || act === 'reject') {
+                if (!isAdmin) { alert('僅系統管理員可變更狀態'); return; }
+                const newStatus = act === 'approve' ? '核准' : '拒絕';
+                await withRetry(() => fns.setDoc(fns.doc(db, 'leaveRequests', id), { status: newStatus, updatedAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date(networkNowMs()).toISOString() }, { merge: true }));
+                try { rec.status = newStatus; } catch {}
+                renderForMonth(monthInput.value);
+              } else if (act === 'edit') {
+                if (!isAdmin) { alert('僅系統管理員可變更狀態'); return; }
+                openModal({
+                  title: '變更狀態',
+                  fields: [ { key: 'status', label: '狀態', type: 'select', options: [ { value: '', label: '待核准' }, { value: '核准', label: '核准' }, { value: '拒絕', label: '拒絕' } ] } ],
+                  submitText: '確認',
+                  onSubmit: async (data) => {
+                    try {
+                      const raw = String(data.status||'').trim();
+                      const nv = raw || '送審';
+                      await withRetry(() => fns.setDoc(fns.doc(db, 'leaveRequests', id), { status: nv, updatedAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date(networkNowMs()).toISOString() }, { merge: true }));
+                      try { rec.status = nv; } catch {}
+                      renderForMonth(monthInput.value);
+                      return true;
+                    } catch (err) { alert(`更新失敗：${err?.message || err}`); return false; }
+                  },
+                  refreshOnSubmit: false,
+                });
+              } else if (act === 'delete') {
+                const curUid = auth?.currentUser?.uid || '';
+                const isSelf = curUid && String(rec.uid||'') === String(curUid);
+                const canDelete = isAdmin || (isSelf && rec.status !== '核准');
+                if (!canDelete) { alert('不可刪除此申請'); return; }
+                const ok = await confirmAction({ title: '確認刪除', text: '確定要刪除此請假申請嗎？', confirmText: '刪除' });
+                if (!ok) return;
+                await withRetry(() => fns.deleteDoc(fns.doc(db, 'leaveRequests', id)));
+                try { const i = list.findIndex((x) => x.id === id); if (i >= 0) list.splice(i, 1); } catch {}
+                renderForMonth(monthInput.value);
+              }
+            } catch (err) { alert(`操作失敗：${err?.message || err}`); }
+          });
         } catch (e) {
           const msg = e?.message || e;
           container.textContent = typeof msg === 'string' ? `載入失敗：${msg}` : "載入失敗";
@@ -4610,24 +4717,22 @@ function applyPagePermissionsForUser(user) {
           if (!targets.length) {
             const tzNow = nowInTZ('Asia/Taipei');
             const html = `
-              <div class="block" id="leader-block-month-summary">
-                <div class="block-header centered"><button id="leaderPointsPrevMonth" class="btn btn-sm" type="button">◀</button><span class="block-title" id="leaderPointsMonthTitle"></span><button id="leaderPointsNextMonth" class="btn btn-sm" type="button">▶</button></div>
-                <div class="month-total-label">本月計點</div>
-                <div class="month-total-wrap"><div id="leaderPointsMonthTotalValue" class="month-total">0</div></div>
-              </div>
-              <div class="block" id="leader-block-checkin-points">
-                <div class="block-header"><span class="block-title">當日列表</span><div class="block-actions"><input id="leaderPointsDateFilter" type="date" class="input" /></div></div>
+              <div class="block" id="leader-block-appeals">
+                <div class="block-header"><span class="block-title">申訴列表</span><div class="block-actions"><select id="leaderPointsNameFilter" class="input"><option value="">全部</option></select><input id="leaderPointsDateFilter" type="date" class="input" /></div></div>
                 <div class="table-wrapper">
-                  <table class="table" aria-label="計點列表">
+                  <table class="table" aria-label="申訴列表">
                     <thead>
                       <tr>
+                        <th>姓名</th>
                         <th>日期</th>
                         <th>事由</th>
                         <th>狀態</th>
                         <th>計點</th>
+                        <th>申訴說明</th>
+                        <th>操作</th>
                       </tr>
                     </thead>
-                    <tbody id="leaderCheckinPointsTbody"><tr><td colspan="4">該公司無打卡紀錄</td></tr></tbody>
+                    <tbody id="leaderAppealsTbody"><tr><td colspan="7">該公司無申訴紀錄</td></tr></tbody>
                   </table>
                 </div>
               </div>`;
@@ -4636,10 +4741,6 @@ function applyPagePermissionsForUser(user) {
             const tzNow2 = tzNow;
             const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
             if (dateInput) dateInput.value = ymd(tzNow2);
-            const monthTitleEl = container.querySelector('#leaderPointsMonthTitle');
-            if (monthTitleEl) monthTitleEl.textContent = `${tzNow2.getFullYear()}-${String(tzNow2.getMonth()+1).padStart(2,'0')}`;
-            const monthTotalEl = container.querySelector('#leaderPointsMonthTotalValue');
-            if (monthTotalEl) monthTotalEl.className = 'month-total total-zero';
             return;
           }
           const uids = targets.map((a) => a.uid || a.id).filter(Boolean).map(String);
@@ -4655,7 +4756,8 @@ function applyPagePermissionsForUser(user) {
               let dt = null;
               if (created && typeof created.toDate === 'function') dt = created.toDate(); else if (typeof created === 'string') dt = new Date(created);
               if (!dt) dt = new Date();
-              records.push({ id: doc.id, ...data, dt });
+              const nm = data.name || nameByUid2.get(String(data.uid || '')) || '使用者';
+              records.push({ id: doc.id, ...data, dt, name: nm });
             });
           }
           let rules = appState.pointsRules || [];
@@ -4668,91 +4770,139 @@ function applyPagePermissionsForUser(user) {
             appState.pointsRules = list;
           } catch {}
           const html = `
-            <div class="block" id="leader-block-month-summary">
-              <div class="block-header centered"><button id="leaderPointsPrevMonth" class="btn btn-sm" type="button">◀</button><span class="block-title" id="leaderPointsMonthTitle"></span><button id="leaderPointsNextMonth" class="btn btn-sm" type="button">▶</button></div>
-              <div class="month-total-label">本月計點</div>
-              <div class="month-total-wrap"><div id="leaderPointsMonthTotalValue" class="month-total">0</div></div>
-            </div>
-            <div class="block" id="leader-block-checkin-points">
-              <div class="block-header"><span class="block-title">當日列表</span><div class="block-actions"><input id="leaderPointsDateFilter" type="date" class="input" /></div></div>
+            <div class="block" id="leader-block-appeals">
+              <div class="block-header"><span class="block-title">申訴列表</span><div class="block-actions"><select id="leaderPointsNameFilter" class="input"></select><input id="leaderPointsDateFilter" type="date" class="input" /></div></div>
               <div class="table-wrapper">
-                <table class="table" aria-label="計點列表">
+                <table class="table" aria-label="申訴列表">
                   <thead>
                     <tr>
+                      <th>姓名</th>
                       <th>日期</th>
                       <th>事由</th>
                       <th>狀態</th>
                       <th>計點</th>
+                      <th>申訴說明</th>
+                      <th>操作</th>
                     </tr>
                   </thead>
-                  <tbody id="leaderCheckinPointsTbody"></tbody>
+                  <tbody id="leaderAppealsTbody"><tr><td colspan="7">該公司無申訴紀錄</td></tr></tbody>
                 </table>
               </div>
             </div>`;
           container.innerHTML = html;
-          const tbody = container.querySelector('#leaderCheckinPointsTbody');
-          const calcPoints = (rec) => {
-            const statusFlag = (rec.inRadius === true) ? '正常' : '異常';
-            const statusText = String(rec.status || '').trim();
-            const baseStatus = statusText.split('-')[0];
-            const reason = baseStatus || statusText;
-            const found = rules.find((r) => String(r.reason||'') === reason && String(r.status||'') === statusFlag) || null;
-            return { statusFlag, reason, points: found ? Number(found.points || 0) : 0 };
-          };
-          const monthTitleEl = container.querySelector('#leaderPointsMonthTitle');
-          const monthTotalEl = container.querySelector('#leaderPointsMonthTotalValue');
-          const prevBtn = container.querySelector('#leaderPointsPrevMonth');
-          const nextBtn = container.querySelector('#leaderPointsNextMonth');
+          const nameFilter = container.querySelector('#leaderPointsNameFilter');
           const dateInput = container.querySelector('#leaderPointsDateFilter');
           const tzNow = nowInTZ('Asia/Taipei');
-          let viewMonth = new Date(tzNow.getFullYear(), tzNow.getMonth(), 1);
-          const monthLabel = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
           const formatDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
           const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-          function renderMonth() {
-            const y = viewMonth.getFullYear();
-            const m = viewMonth.getMonth();
-            const start = new Date(y, m, 1);
-            const end = new Date(y, m + 1, 1);
-            const total = records.reduce((sum, rec) => {
-              if (rec.dt >= start && rec.dt < end) {
-                const { points } = calcPoints(rec);
-                return sum + (Number(points) || 0);
-              }
-              return sum;
-            }, 0);
-            if (monthTitleEl) monthTitleEl.textContent = monthLabel(viewMonth);
-            if (monthTotalEl) {
-              monthTotalEl.textContent = String(total);
-              monthTotalEl.className = 'month-total ' + (total === 0 ? 'total-zero' : (total > 0 ? 'total-pos' : 'total-neg'));
-            }
+          const nameOptions = [{ value: '', label: '全部' }].concat(targets.map((a) => ({ value: String(a.uid || a.id || ''), label: a.name || a.email || '使用者' })));
+          if (nameFilter) { nameFilter.innerHTML = nameOptions.map((o) => `<option value="${o.value}">${o.label}</option>`).join(''); }
+          const nameByUid = new Map();
+          targets.forEach((a) => {
+            const nm = a.name || a.email || '使用者';
+            const id1 = String(a.id||''); if (id1) nameByUid.set(id1, nm);
+            const id2 = String(a.uid||''); if (id2) nameByUid.set(id2, nm);
+          });
+          const appeals = [];
+          const aref = fns.collection(db, 'pointAppeals');
+          const chunks2 = []; for (let i = 0; i < uids.length; i += 10) chunks2.push(uids.slice(i, i + 10));
+          for (const ch of chunks2) {
+            const qa = fns.query(aref, fns.where('uid', 'in', ch));
+            const asnap = await withRetry(() => fns.getDocs(qa));
+            asnap.forEach((doc) => {
+              const data = doc.data() || {};
+              let created = data.createdAt;
+              let dt = null;
+              if (created && typeof created.toDate === 'function') dt = created.toDate(); else if (typeof created === 'string') dt = new Date(created);
+              if (!(dt instanceof Date) || isNaN(dt)) dt = new Date();
+              const nm = nameByUid.get(String(data.uid||'')) || data.name || '使用者';
+              appeals.push({ id: doc.id, ...data, dt, name: nm });
+            });
           }
-          function renderDaily() {
+          const tbody = container.querySelector('#leaderAppealsTbody');
+          function renderAppeals() {
             if (!tbody) return;
             const v = String(dateInput?.value || '');
-            let sel = v ? new Date(`${v}T00:00:00`) : tzNow;
-            const y = sel.getFullYear();
-            const m = sel.getMonth();
-            const d = sel.getDate();
-            const rows = records
-              .filter((rec) => rec.dt.getFullYear() === y && rec.dt.getMonth() === m && rec.dt.getDate() === d)
-              .sort((a,b)=>b.dt - a.dt)
-              .map((rec) => {
-                const { statusFlag, reason, points } = calcPoints(rec);
-                return `<tr data-id="${rec.id}"><td>${formatDate(rec.dt)}</td><td>${reason}</td><td>${statusFlag}</td><td>${points}</td></tr>`;
+            const y = Number(v.split('-')[0] || tzNow.getFullYear());
+            const m = Number((v.split('-')[1] || String(tzNow.getMonth()+1)).padStart(2,'0')) - 1;
+            const d = Number((v.split('-')[2] || String(tzNow.getDate())).padStart(2,'0'));
+            const selUid = String(nameFilter?.value || '').trim();
+            const start = new Date(y, m, d);
+            const end = new Date(y, m, d + 1);
+            const rows = appeals
+              .filter((a) => a.dt >= start && a.dt < end && (!selUid || String(a.uid||'') === selUid))
+              .sort((a,b) => b.dt - a.dt)
+              .map((a) => {
+                const dtStr = formatDate(a.dt);
+                const reason = a.reason || '';
+                const statusFlag = a.status || '';
+                const points = (a.points != null) ? String(a.points) : '';
+                const text = a.appealText || '';
+                const state = a.state || '';
+                const isAdmin = String(appState.currentUserRole||'') === '系統管理員';
+                const processed = state && state !== '送審';
+                const approveCls = processed ? 'btn btn-grey' : 'btn btn-green';
+                const rejectCls = processed ? 'btn btn-grey' : 'btn btn-darkred';
+                const approveDisabled = (!isAdmin || processed) ? 'disabled' : '';
+                const rejectDisabled = (!isAdmin || processed) ? 'disabled' : '';
+                const editDisabled = (!isAdmin) ? 'disabled' : '';
+                const deleteDisabled = (!isAdmin) ? 'disabled' : '';
+                return `<tr data-id="${a.id}"><td>${a.name}</td><td>${dtStr}</td><td>${reason}</td><td>${statusFlag}</td><td>${points}</td><td>${text}</td><td class="cell-actions"><button class="${approveCls}" data-act="approve" data-id="${a.id}" ${approveDisabled}>核准</button> <button class="${rejectCls}" data-act="reject" data-id="${a.id}" ${rejectDisabled}>拒絕</button> <button class="btn btn-blue" data-act="edit" data-id="${a.id}" ${editDisabled}>編輯</button> <button class="btn btn-red" data-act="delete" data-id="${a.id}" ${deleteDisabled}>刪除</button></td></tr>`;
               }).join('');
-            tbody.innerHTML = rows;
+            tbody.innerHTML = rows || `<tr><td colspan="7">該日無申訴紀錄</td></tr>`;
           }
           if (dateInput) dateInput.value = ymd(tzNow);
-          renderMonth();
-          renderDaily();
-          prevBtn?.addEventListener('click', () => { viewMonth = new Date(viewMonth.getFullYear(), viewMonth.getMonth() - 1, 1); renderMonth(); });
-          nextBtn?.addEventListener('click', () => { viewMonth = new Date(viewMonth.getFullYear(), viewMonth.getMonth() + 1, 1); renderMonth(); });
-          dateInput?.addEventListener('change', () => { renderDaily(); });
-          const summaryBlock = container.querySelector('#leader-block-month-summary');
-          let sx = 0;
-          summaryBlock?.addEventListener('touchstart', (e) => { try { sx = e.touches?.[0]?.clientX || 0; } catch {} }, { passive: true });
-          summaryBlock?.addEventListener('touchend', (e) => { try { const ex = e.changedTouches?.[0]?.clientX || 0; const dx = ex - sx; if (dx < -50) { viewMonth = new Date(viewMonth.getFullYear(), viewMonth.getMonth() - 1, 1); renderMonth(); } else if (dx > 50) { viewMonth = new Date(viewMonth.getFullYear(), viewMonth.getMonth() + 1, 1); renderMonth(); } } catch {} }, { passive: true });
+          renderAppeals();
+          dateInput?.addEventListener('change', () => { renderAppeals(); });
+          nameFilter?.addEventListener('change', () => { renderAppeals(); });
+          tbody?.addEventListener('click', async (e) => {
+            const btn = e.target.closest('button');
+            if (!btn) return;
+            const act = btn.dataset.act || '';
+            const id = btn.dataset.id || '';
+            const rec = appeals.find((x) => x.id === id);
+            if (!rec) return;
+            const isAdmin = String(appState.currentUserRole||'') === '系統管理員';
+            try {
+              await ensureFirebase();
+              if (act === 'approve' || act === 'reject') {
+                if (!isAdmin) { alert('僅系統管理員可變更狀態'); return; }
+                const newState = act === 'approve' ? '核准' : '拒絕';
+                const payload = { state: newState, updatedAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date(networkNowMs()).toISOString() };
+                if (newState === '核准') payload.points = 0;
+                await withRetry(() => fns.setDoc(fns.doc(db, 'pointAppeals', id), payload, { merge: true }));
+                try { rec.state = newState; if (newState === '核准') rec.points = 0; } catch {}
+                renderAppeals();
+              } else if (act === 'edit') {
+                if (!isAdmin) { alert('僅系統管理員可變更狀態'); return; }
+                openModal({
+                  title: '變更審核狀態',
+                  fields: [ { key: 'state', label: '審核狀態', type: 'select', options: [ { value: '', label: '待核准' }, { value: '核准', label: '核准' }, { value: '拒絕', label: '拒絕' } ] } ],
+                  submitText: '確認',
+                  onSubmit: async (data) => {
+                    try {
+                      const raw = String(data.state||'').trim();
+                      const nv = raw || '送審';
+                      const payload = { state: nv, updatedAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date(networkNowMs()).toISOString() };
+                      if (nv === '核准') payload.points = 0;
+                      await withRetry(() => fns.setDoc(fns.doc(db, 'pointAppeals', id), payload, { merge: true }));
+                      try { rec.state = nv; if (nv === '核准') rec.points = 0; } catch {}
+                      renderAppeals();
+                      return true;
+                    } catch (err) { alert(`更新失敗：${err?.message || err}`); return false; }
+                  },
+                  refreshOnSubmit: false,
+                });
+              } else if (act === 'delete') {
+                if (!isAdmin) { alert('僅系統管理員可刪除'); return; }
+                const ok = await confirmAction({ title: '確認刪除', text: '確定要刪除此計點申訴嗎？', confirmText: '刪除' });
+                if (!ok) return;
+                await withRetry(() => fns.deleteDoc(fns.doc(db, 'pointAppeals', id)));
+                try { const i = appeals.findIndex((x) => x.id === id); if (i >= 0) appeals.splice(i, 1); } catch {}
+                renderAppeals();
+              }
+            } catch (err) { alert(`操作失敗：${err?.message || err}`); }
+          });
         } catch (e) {
           const msg = e?.message || e;
           container.textContent = typeof msg === 'string' ? `載入失敗：${msg}` : "載入失敗";

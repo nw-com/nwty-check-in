@@ -288,6 +288,7 @@ button[disabled] { cursor: not-allowed; }
 /* 顏色方案 */
 .btn-green { background: #0f9d58; }
 .btn-red { background: #FF0000; }
+.btn-darkred { background: #CC0000; }
 .btn-blue { background: #1e88e5; }
 .btn-darkgreen { background: #0b8043; }
 .btn-orange { background: #f57c00; }

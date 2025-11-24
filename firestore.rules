@@ -114,7 +114,7 @@ service cloud.firestore {
 
     // 計點申訴：本人可建立與讀取（僅本人或管理員）；管理員可讀寫刪除
     match /pointAppeals/{docId} {
-      allow read: if isAdmin() || (isLoggedIn() && resource.data.uid == request.auth.uid);
+      allow read: if isOfficer() || isAdmin() || (isLoggedIn() && resource.data.uid == request.auth.uid);
       allow create: if isLoggedIn() && request.resource.data.uid == request.auth.uid && request.resource.data.state == '送審';
       allow update: if isAdmin();
       allow delete: if isAdmin();
