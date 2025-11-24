@@ -16,6 +16,17 @@ service cloud.firestore {
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "系統管理員";
     }
 
+    // 幹部身份可讀公司內他人資料
+    function isOfficer() {
+      return isLoggedIn() && (
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "系統管理員" ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "管理層" ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "高階主管" ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "初階主管" ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "行政"
+      );
+    }
+
     // 使用者資料：可讀（登入），建立/刪除（管理員），本人更新但不可改變角色
     match /users/{uid} {
       allow read: if isLoggedIn();
@@ -47,7 +58,7 @@ service cloud.firestore {
 
     // 打卡紀錄：登入者可讀與建立，更新/刪除限管理員或本人
     match /checkins/{docId} {
-      allow read: if isLoggedIn() && resource.data.uid == request.auth.uid;
+      allow read: if isOfficer() || (isLoggedIn() && resource.data.uid == request.auth.uid);
       allow create: if isLoggedIn() && request.resource.data.uid == request.auth.uid;
       allow update, delete: if isAdmin() || (isLoggedIn() && resource.data.uid == request.auth.uid);
     }
@@ -78,7 +89,7 @@ service cloud.firestore {
 
     // 請假申請：本人可讀與建立；更新/刪除限管理員或本人（且未核准）
     match /leaveRequests/{docId} {
-      allow read: if isAdmin() || (isLoggedIn() && resource.data.uid == request.auth.uid);
+      allow read: if isOfficer() || isAdmin() || (isLoggedIn() && resource.data.uid == request.auth.uid);
       allow create: if isLoggedIn() && request.resource.data.uid == request.auth.uid && request.resource.data.status == '送審';
       // 僅管理員可變更狀態；本人僅能在未核准時更新其它欄位（狀態不可變更）
       allow update: if isAdmin() || (

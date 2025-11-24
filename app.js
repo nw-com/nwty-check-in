@@ -111,17 +111,27 @@ function updateHomeMap() {
 
 function two(n) { return n < 10 ? "0" + n : "" + n; }
 async function initNetworkTime() {
+  let ok = false;
   try {
-    const res = await fetch('https://worldtimeapi.org/api/timezone/Asia/Taipei', { cache: 'no-store' });
-    if (!res.ok) throw new Error('time api');
-    const j = await res.json();
-    const netUtc = Date.parse(j.utc_datetime);
-    appState.timeOffsetMs = netUtc - Date.now();
-    appState.networkTimeOk = true;
-  } catch (_) {
-    appState.timeOffsetMs = 0;
-    appState.networkTimeOk = false;
+    const res2 = await fetch('https://timeapi.io/api/Time/current/zone?timeZone=Asia/Taipei', { cache: 'no-store' });
+    if (!res2.ok) throw new Error('time api 2');
+    const j2 = await res2.json();
+    const netStr = `${j2.date}T${j2.time}`;
+    const netUtc2 = Date.parse(netStr);
+    if (!isNaN(netUtc2)) { appState.timeOffsetMs = netUtc2 - Date.now(); ok = true; }
+  } catch {}
+  if (!ok) {
+    try {
+      const res = await fetch('https://worldtimeapi.org/api/timezone/Asia/Taipei', { cache: 'no-store' });
+      if (!res.ok) throw new Error('time api');
+      const j = await res.json();
+      const netUtc = Date.parse(j.utc_datetime);
+      appState.timeOffsetMs = netUtc - Date.now();
+      ok = true;
+    } catch {}
   }
+  appState.networkTimeOk = !!ok;
+  if (!ok) { appState.timeOffsetMs = 0; }
 }
 async function ensureNetworkTime() { if (appState.networkTimeOk) return true; await initNetworkTime(); return !!appState.networkTimeOk; }
 function networkNowMs() { return Date.now() + (appState.timeOffsetMs || 0); }
@@ -1394,7 +1404,10 @@ function openCheckinMapViewer({ targetName = "", targetCoords = "", targetRadius
 
 function companyStats(companyId) {
   const communityCount = appState.communities.filter((c) => c.companyId === companyId).length;
-  const accountsInCompany = appState.accounts.filter((a) => a.companyId === companyId);
+  const accountsInCompany = appState.accounts.filter((a) => {
+    const ids = Array.isArray(a.companyIds) ? a.companyIds : (a.companyId ? [a.companyId] : []);
+    return ids.includes(companyId);
+  });
   const leaderRoles = new Set(["系統管理員", "管理層", "高階主管", "初階主管", "行政"]);
   const staffRoles = new Set(["總幹事", "秘書", "清潔", "機電", "保全"]);
   const leaderCount = accountsInCompany.filter((a) => leaderRoles.has(a.role)).length;
@@ -3379,6 +3392,7 @@ let ensureFirebasePromise = null;
       // 僅系統管理員載入待審核帳號，避免非管理員被規則擋讀
       if (role === "系統管理員") {
         await loadPendingAccountsFromFirestore();
+        try { await normalizeCompanyIdsForAccounts(); } catch {}
       }
       if (activeMainTab === "settings" && activeSubTab === "一般") renderSettingsContent("一般");
 
@@ -3705,6 +3719,43 @@ let ensureFirebasePromise = null;
     }
   }
 
+  async function normalizeCompanyIdsForAccounts() {
+    try {
+      await ensureFirebase();
+      const companies = Array.isArray(appState.companies) ? appState.companies : [];
+      if (!companies.length) return;
+      const idSet = new Set(companies.map((c) => String(c.id || '').trim()).filter(Boolean));
+      const nameToId = new Map(companies.map((c) => [String(c.name || '').trim(), String(c.id || '').trim()]));
+      const accounts = Array.isArray(appState.accounts) ? appState.accounts : [];
+      for (let i = 0; i < accounts.length; i++) {
+        const a = accounts[i];
+        const list0 = Array.isArray(a.companyIds) ? a.companyIds : (a.companyId ? [a.companyId] : []);
+        const norm = [];
+        list0.forEach((v) => {
+          const s = String(v || '').trim();
+          if (!s) return;
+          if (idSet.has(s)) { norm.push(s); return; }
+          const id = nameToId.get(s);
+          if (id) norm.push(id);
+        });
+        const uniq = Array.from(new Set(norm));
+        if (!uniq.length) continue;
+        const oldIds = (Array.isArray(a.companyIds) ? a.companyIds : []).map((x) => String(x || '').trim());
+        const needUpdate = JSON.stringify(oldIds) !== JSON.stringify(uniq) || String(a.companyId || '').trim() !== String(uniq[0] || '');
+        if (!needUpdate) continue;
+        const payload = { companyIds: uniq, companyId: uniq[0] };
+        try {
+          if (db && fns.updateDoc && fns.doc) {
+            await withRetry(() => fns.updateDoc(fns.doc(db, 'users', a.id), payload));
+          }
+          const updated = { ...a, ...payload };
+          const idx = appState.accounts.findIndex((x) => x.id === a.id);
+          if (idx >= 0) appState.accounts[idx] = updated;
+        } catch {}
+      }
+    } catch {}
+  }
+
   async function loadCommunitiesFromFirestore() {
     if (!db || !fns.getDocs || !fns.collection) return;
     try {
@@ -3886,6 +3937,12 @@ function applyPagePermissionsForUser(user) {
         sel.disabled = true;
       } else if (appState.leaderCompanyFilter) {
         sel.value = appState.leaderCompanyFilter;
+      } else {
+        const firstOpt = sel.options && sel.options.length ? sel.options[0].value : null;
+        if (firstOpt) {
+          appState.leaderCompanyFilter = firstOpt;
+          sel.value = firstOpt;
+        }
       }
       sel.addEventListener('change', () => {
         appState.leaderCompanyFilter = sel.value || null;
@@ -4280,6 +4337,429 @@ function applyPagePermissionsForUser(user) {
     const container = document.getElementById("leaderContent");
     if (!container) return;
     container.innerHTML = "";
+    try {
+      const sel = document.getElementById('leaderCompanySelect');
+      if (!appState.leaderCompanyFilter && sel && sel.value) appState.leaderCompanyFilter = sel.value;
+    } catch {}
+    if (label === "紀錄") {
+      (async () => {
+        try {
+          await ensureFirebase();
+          const coId = appState.leaderCompanyFilter || null;
+          const accounts = Array.isArray(appState.accounts) ? appState.accounts : [];
+          if (!coId) { container.textContent = "請先選擇公司"; return; }
+          const companies = Array.isArray(appState.companies) ? appState.companies : [];
+          const coObj = companies.find((c) => String(c.id||'') === String(coId)) || null;
+          const coName = coObj?.name || null;
+          const targets = accounts.filter((a) => {
+            const ids0 = Array.isArray(a.companyIds) ? a.companyIds : (a.companyId ? [a.companyId] : []);
+            const ids = ids0.map((x) => String(x||'').trim());
+            const idOk = coId ? ids.includes(String(coId)) : false;
+            const nameOk = coName ? ids.includes(String(coName)) : false;
+            return idOk || nameOk;
+          });
+          if (!targets.length) {
+            // 仍渲染空界面，避免誤導
+            const tzNow = nowInTZ('Asia/Taipei');
+            const todayYmd = `${tzNow.getFullYear()}-${String(tzNow.getMonth()+1).padStart(2,'0')}-${String(tzNow.getDate()).padStart(2,'0')}`;
+            container.innerHTML = `
+              <div class="roster-datebar">
+                <label for="leaderRecordDate">日期：</label>
+                <input id="leaderRecordDate" type="date" />
+              </div>
+              <div id="leaderRecordList">該公司無打卡紀錄</div>
+            `;
+            const dateInput = container.querySelector('#leaderRecordDate');
+            if (dateInput) dateInput.value = todayYmd;
+            return;
+          }
+          const nameByUid = new Map();
+          targets.forEach((a) => {
+            const nm = a.name || a.email || "使用者";
+            const id1 = String(a.id||''); if (id1) nameByUid.set(id1, nm);
+            const id2 = String(a.uid||''); if (id2) nameByUid.set(id2, nm);
+          });
+          const uids = targets.map((a) => a.uid || a.id).filter(Boolean).map(String);
+          const ref = fns.collection(db, "checkins");
+          const chunks = []; for (let i = 0; i < uids.length; i += 10) chunks.push(uids.slice(i, i + 10));
+          const list = [];
+          for (const ch of chunks) {
+            const q = fns.query(ref, fns.where("uid", "in", ch));
+            const snap = await withRetry(() => fns.getDocs(q));
+            snap.forEach((doc) => {
+              const data = doc.data() || {};
+              let created = data.createdAt;
+              let dt = null;
+              if (created && typeof created.toDate === 'function') dt = created.toDate(); else if (typeof created === 'string') dt = new Date(created);
+              if (!(dt instanceof Date) || isNaN(dt)) return;
+              const nm = nameByUid.get(String(data.uid || '')) || data.name || '使用者';
+              list.push({ id: doc.id, ...data, dt, name: nm });
+            });
+          }
+          const tzNow = nowInTZ('Asia/Taipei');
+          const todayYmd = `${tzNow.getFullYear()}-${String(tzNow.getMonth()+1).padStart(2,'0')}-${String(tzNow.getDate()).padStart(2,'0')}`;
+          container.innerHTML = `
+            <div class="roster-datebar">
+              <label for="leaderRecordDate">日期：</label>
+              <input id="leaderRecordDate" type="date" />
+            </div>
+            <div id="leaderRecordList"></div>
+          `;
+          const dateInput = container.querySelector('#leaderRecordDate');
+          const listRoot = container.querySelector('#leaderRecordList');
+          if (!listRoot || !dateInput) return;
+          dateInput.value = todayYmd;
+          function renderForDate(ymdStr) {
+            const parts = String(ymdStr || '').split('-');
+            if (parts.length !== 3) return;
+            const y = Number(parts[0]);
+            const m = Number(parts[1]) - 1;
+            const d = Number(parts[2]);
+            const d0 = new Date(y, m, d);
+            const d1 = new Date(d0); d1.setDate(d0.getDate() + 1);
+            const dayList = list.filter((r) => r.dt >= d0 && r.dt < d1).sort((a, b) => b.dt - a.dt).slice(0, 100);
+            listRoot.innerHTML = '';
+            if (!dayList.length) { listRoot.textContent = '該日無打卡紀錄'; return; }
+            dayList.forEach((r) => {
+              const card = document.createElement('div');
+              card.className = 'record-card';
+              card.style.display = 'grid';
+              card.style.gridTemplateColumns = '1fr';
+              card.style.gap = '8px';
+              const status = document.createElement('div');
+              const stRaw = r.status || '';
+              const baseSt = String(stRaw).split('-')[0];
+              const stCls = (() => {
+                switch (baseSt) {
+                  case '上班': return 'work';
+                  case '下班': return 'off';
+                  case '外出': return 'out';
+                  case '抵達': return 'arrive';
+                  case '離開': return 'leave';
+                  case '返回': return 'return';
+                  default: return '';
+                }
+              })();
+              const place = r.locationName || '未知地點';
+              const flagHtml = r.inRadius === true ? ' <span class="status-flag good">正常</span>' : ' <span class="status-flag bad">異常</span>';
+              const stDisplay = (() => {
+                const reason = r.reason || '';
+                if ((baseSt === '外出' || baseSt === '抵達' || baseSt === '離開') && reason) return `${baseSt}-${reason}`;
+                return stRaw || baseSt;
+              })();
+              const nameText = r.name || '使用者';
+              status.innerHTML = `${nameText} 打卡地點：<span class="status-label ${stCls}">${place}</span> 狀態：<span class="status-label ${stCls}">${stDisplay}</span>${flagHtml}`;
+              const dtStr = `${r.dt.getFullYear()}-${String(r.dt.getMonth()+1).padStart(2,'0')}-${String(r.dt.getDate()).padStart(2,'0')} ${String(r.dt.getHours()).padStart(2,'0')}:${String(r.dt.getMinutes()).padStart(2,'0')}:${String(r.dt.getSeconds()).padStart(2,'0')}`;
+              const when = document.createElement('div');
+              when.textContent = `時間：${dtStr}`;
+              card.appendChild(status);
+              card.appendChild(when);
+              listRoot.appendChild(card);
+            });
+          }
+          renderForDate(todayYmd);
+          dateInput.addEventListener('change', () => renderForDate(dateInput.value));
+        } catch (e) {
+          const msg = e?.message || e;
+          container.textContent = typeof msg === 'string' ? `載入失敗：${msg}` : "載入失敗";
+        }
+      })();
+      return;
+    }
+    if (label === "請假") {
+      (async () => {
+        try {
+          await ensureFirebase();
+          const coId = appState.leaderCompanyFilter || null;
+          const accounts = Array.isArray(appState.accounts) ? appState.accounts : [];
+          if (!coId) { container.textContent = "請先選擇公司"; return; }
+          const companies = Array.isArray(appState.companies) ? appState.companies : [];
+          const coObj = companies.find((c) => String(c.id||'') === String(coId)) || null;
+          const coName = coObj?.name || null;
+          const targets = accounts.filter((a) => {
+            const ids0 = Array.isArray(a.companyIds) ? a.companyIds : (a.companyId ? [a.companyId] : []);
+            const ids = ids0.map((x) => String(x||'').trim());
+            const idOk = coId ? ids.includes(String(coId)) : false;
+            const nameOk = coName ? ids.includes(String(coName)) : false;
+            const allowedRoles = ["系統管理員","管理層","高階主管","初階主管","行政"];
+            const roleOk = allowedRoles.includes(String(a.role||""));
+            return roleOk && (idOk || nameOk);
+          });
+          if (!targets.length) {
+            const tzNow = nowInTZ('Asia/Taipei');
+            const y = tzNow.getFullYear();
+            const m = tzNow.getMonth() + 1;
+            const todayYm = `${y}-${String(m).padStart(2,'0')}`;
+            container.innerHTML = `
+              <div class="roster-datebar">
+                <label for="leaderLeaveMonth">月份：</label>
+                <input id="leaderLeaveMonth" type="month" />
+              </div>
+              <div id="leaderLeaveList">該公司無請假項目</div>
+            `;
+            const monthInput = container.querySelector('#leaderLeaveMonth');
+            if (monthInput) monthInput.value = todayYm;
+            return;
+          }
+          const nameByUid = new Map();
+          targets.forEach((a) => {
+            const nm = a.name || a.email || "使用者";
+            const id1 = String(a.id||''); if (id1) nameByUid.set(id1, nm);
+            const id2 = String(a.uid||''); if (id2) nameByUid.set(id2, nm);
+          });
+          const uids = targets.map((a) => a.uid || a.id).filter(Boolean).map(String);
+          const tzNow = nowInTZ('Asia/Taipei');
+          const ref = fns.collection(db, "leaveRequests");
+          const chunks = []; for (let i = 0; i < uids.length; i += 10) chunks.push(uids.slice(i, i + 10));
+          const list = [];
+          for (const ch of chunks) {
+            const q = fns.query(ref, fns.where("uid", "in", ch));
+            const snap = await withRetry(() => fns.getDocs(q));
+            snap.forEach((doc) => {
+              const data = doc.data() || {};
+              let created = data.createdAt;
+              let dt = null;
+              if (created && typeof created.toDate === 'function') dt = created.toDate(); else if (typeof created === 'string') dt = new Date(created);
+              if (!(dt instanceof Date) || isNaN(dt)) dt = new Date();
+              const s = data.startAt; const e = data.endAt;
+              const sdt = typeof s === 'string' ? new Date(s) : (s && typeof s.toDate === 'function' ? s.toDate() : null);
+              const edt = typeof e === 'string' ? new Date(e) : (e && typeof e.toDate === 'function' ? e.toDate() : null);
+              const nm = nameByUid.get(String(data.uid || '')) || data.name || '使用者';
+              list.push({ id: doc.id, ...data, dt, sdt, edt, name: nm });
+            });
+          }
+          const y = tzNow.getFullYear();
+          const m = tzNow.getMonth() + 1;
+          const todayYm = `${y}-${String(m).padStart(2,'0')}`;
+          container.innerHTML = `
+            <div class="roster-datebar">
+              <label for="leaderLeaveMonth">月份：</label>
+              <input id="leaderLeaveMonth" type="month" />
+            </div>
+            <div id="leaderLeaveList"></div>
+          `;
+          const monthInput = container.querySelector('#leaderLeaveMonth');
+          const listRoot = container.querySelector('#leaderLeaveList');
+          if (!monthInput || !listRoot) return;
+          monthInput.value = todayYm;
+          const formatDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+          const formatDT = (d) => `${formatDate(d)} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+          function renderForMonth(ymStr) {
+            const parts = String(ymStr || '').split('-');
+            if (parts.length !== 2) return;
+            const y = Number(parts[0]);
+            const m = Number(parts[1]) - 1;
+            const start = new Date(y, m, 1);
+            const end = new Date(y, m + 1, 1);
+            const monthList = list.filter((r) => {
+              const base = r.sdt instanceof Date && !isNaN(r.sdt) ? r.sdt : r.dt;
+              return base >= start && base < end;
+            }).sort((a, b) => b.dt - a.dt);
+            listRoot.innerHTML = '';
+            if (!monthList.length) { listRoot.textContent = '該月無請假項目'; return; }
+            monthList.forEach((r) => {
+              const card = document.createElement('div');
+              card.className = 'record-card';
+              card.style.display = 'grid';
+              card.style.gridTemplateColumns = '1fr';
+              card.style.gap = '8px';
+              const status = document.createElement('div');
+              const nameText = r.name || '使用者';
+              const typeText = r.type || '請假';
+              const sStr = r.sdt instanceof Date && !isNaN(r.sdt) ? formatDT(r.sdt) : '未設定';
+              const eStr = r.edt instanceof Date && !isNaN(r.edt) ? formatDT(r.edt) : '未設定';
+              const reason = r.reason || '';
+              const st = r.status || '送審';
+              status.innerHTML = `${nameText} 類型：<span class="status-label work">${typeText}</span> 時段：<span class="status-label arrive">${sStr}</span> → <span class="status-label leave">${eStr}</span> 原因：<span class="status-label return">${reason || '無'}</span> 狀態：<span class="status-label ${st==='核准'?'work':'out'}">${st}</span>`;
+              const when = document.createElement('div');
+              const dtStr = `${r.dt.getFullYear()}-${String(r.dt.getMonth()+1).padStart(2,'0')}-${String(r.dt.getDate()).padStart(2,'0')} ${String(r.dt.getHours()).padStart(2,'0')}:${String(r.dt.getMinutes()).padStart(2,'0')}:${String(r.dt.getSeconds()).padStart(2,'0')}`;
+              when.textContent = `建立：${dtStr}`;
+              card.appendChild(status);
+              card.appendChild(when);
+              listRoot.appendChild(card);
+            });
+          }
+          renderForMonth(todayYm);
+          monthInput.addEventListener('change', () => renderForMonth(monthInput.value));
+        } catch (e) {
+          const msg = e?.message || e;
+          container.textContent = typeof msg === 'string' ? `載入失敗：${msg}` : "載入失敗";
+        }
+      })();
+      return;
+    }
+    if (label === "計點") {
+      (async () => {
+        try {
+          await ensureFirebase();
+          const coId = appState.leaderCompanyFilter || null;
+          const accounts = Array.isArray(appState.accounts) ? appState.accounts : [];
+          if (!coId) { container.textContent = "請先選擇公司"; return; }
+          const companies = Array.isArray(appState.companies) ? appState.companies : [];
+          const coObj = companies.find((c) => String(c.id||'') === String(coId)) || null;
+          const coName = coObj?.name || null;
+          const targets = accounts.filter((a) => {
+            const ids0 = Array.isArray(a.companyIds) ? a.companyIds : (a.companyId ? [a.companyId] : []);
+            const ids = ids0.map((x) => String(x||'').trim());
+            const idOk = coId ? ids.includes(String(coId)) : false;
+            const nameOk = coName ? ids.includes(String(coName)) : false;
+            const allowedRoles = ["系統管理員","管理層","高階主管","初階主管","行政"];
+            const roleOk = allowedRoles.includes(String(a.role||""));
+            return roleOk && (idOk || nameOk);
+          });
+          if (!targets.length) {
+            const tzNow = nowInTZ('Asia/Taipei');
+            const html = `
+              <div class="block" id="leader-block-month-summary">
+                <div class="block-header centered"><button id="leaderPointsPrevMonth" class="btn btn-sm" type="button">◀</button><span class="block-title" id="leaderPointsMonthTitle"></span><button id="leaderPointsNextMonth" class="btn btn-sm" type="button">▶</button></div>
+                <div class="month-total-label">本月計點</div>
+                <div class="month-total-wrap"><div id="leaderPointsMonthTotalValue" class="month-total">0</div></div>
+              </div>
+              <div class="block" id="leader-block-checkin-points">
+                <div class="block-header"><span class="block-title">當日列表</span><div class="block-actions"><input id="leaderPointsDateFilter" type="date" class="input" /></div></div>
+                <div class="table-wrapper">
+                  <table class="table" aria-label="計點列表">
+                    <thead>
+                      <tr>
+                        <th>日期</th>
+                        <th>事由</th>
+                        <th>狀態</th>
+                        <th>計點</th>
+                      </tr>
+                    </thead>
+                    <tbody id="leaderCheckinPointsTbody"><tr><td colspan="4">該公司無打卡紀錄</td></tr></tbody>
+                  </table>
+                </div>
+              </div>`;
+            container.innerHTML = html;
+            const dateInput = container.querySelector('#leaderPointsDateFilter');
+            const tzNow2 = tzNow;
+            const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+            if (dateInput) dateInput.value = ymd(tzNow2);
+            const monthTitleEl = container.querySelector('#leaderPointsMonthTitle');
+            if (monthTitleEl) monthTitleEl.textContent = `${tzNow2.getFullYear()}-${String(tzNow2.getMonth()+1).padStart(2,'0')}`;
+            const monthTotalEl = container.querySelector('#leaderPointsMonthTotalValue');
+            if (monthTotalEl) monthTotalEl.className = 'month-total total-zero';
+            return;
+          }
+          const uids = targets.map((a) => a.uid || a.id).filter(Boolean).map(String);
+          const ref = fns.collection(db, "checkins");
+          const chunks = []; for (let i = 0; i < uids.length; i += 10) chunks.push(uids.slice(i, i + 10));
+          const records = [];
+          for (const ch of chunks) {
+            const q = fns.query(ref, fns.where("uid", "in", ch));
+            const snap = await withRetry(() => fns.getDocs(q));
+            snap.forEach((doc) => {
+              const data = doc.data() || {};
+              let created = data.createdAt;
+              let dt = null;
+              if (created && typeof created.toDate === 'function') dt = created.toDate(); else if (typeof created === 'string') dt = new Date(created);
+              if (!dt) dt = new Date();
+              records.push({ id: doc.id, ...data, dt });
+            });
+          }
+          let rules = appState.pointsRules || [];
+          try {
+            const rref = fns.collection(db, 'pointsRules');
+            const rsnap = await withRetry(() => fns.getDocs(rref));
+            const list = [];
+            rsnap.forEach((doc) => { const d = doc.data() || {}; list.push({ id: doc.id, ...d }); });
+            rules = list;
+            appState.pointsRules = list;
+          } catch {}
+          const html = `
+            <div class="block" id="leader-block-month-summary">
+              <div class="block-header centered"><button id="leaderPointsPrevMonth" class="btn btn-sm" type="button">◀</button><span class="block-title" id="leaderPointsMonthTitle"></span><button id="leaderPointsNextMonth" class="btn btn-sm" type="button">▶</button></div>
+              <div class="month-total-label">本月計點</div>
+              <div class="month-total-wrap"><div id="leaderPointsMonthTotalValue" class="month-total">0</div></div>
+            </div>
+            <div class="block" id="leader-block-checkin-points">
+              <div class="block-header"><span class="block-title">當日列表</span><div class="block-actions"><input id="leaderPointsDateFilter" type="date" class="input" /></div></div>
+              <div class="table-wrapper">
+                <table class="table" aria-label="計點列表">
+                  <thead>
+                    <tr>
+                      <th>日期</th>
+                      <th>事由</th>
+                      <th>狀態</th>
+                      <th>計點</th>
+                    </tr>
+                  </thead>
+                  <tbody id="leaderCheckinPointsTbody"></tbody>
+                </table>
+              </div>
+            </div>`;
+          container.innerHTML = html;
+          const tbody = container.querySelector('#leaderCheckinPointsTbody');
+          const calcPoints = (rec) => {
+            const statusFlag = (rec.inRadius === true) ? '正常' : '異常';
+            const statusText = String(rec.status || '').trim();
+            const baseStatus = statusText.split('-')[0];
+            const reason = baseStatus || statusText;
+            const found = rules.find((r) => String(r.reason||'') === reason && String(r.status||'') === statusFlag) || null;
+            return { statusFlag, reason, points: found ? Number(found.points || 0) : 0 };
+          };
+          const monthTitleEl = container.querySelector('#leaderPointsMonthTitle');
+          const monthTotalEl = container.querySelector('#leaderPointsMonthTotalValue');
+          const prevBtn = container.querySelector('#leaderPointsPrevMonth');
+          const nextBtn = container.querySelector('#leaderPointsNextMonth');
+          const dateInput = container.querySelector('#leaderPointsDateFilter');
+          const tzNow = nowInTZ('Asia/Taipei');
+          let viewMonth = new Date(tzNow.getFullYear(), tzNow.getMonth(), 1);
+          const monthLabel = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+          const formatDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+          const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+          function renderMonth() {
+            const y = viewMonth.getFullYear();
+            const m = viewMonth.getMonth();
+            const start = new Date(y, m, 1);
+            const end = new Date(y, m + 1, 1);
+            const total = records.reduce((sum, rec) => {
+              if (rec.dt >= start && rec.dt < end) {
+                const { points } = calcPoints(rec);
+                return sum + (Number(points) || 0);
+              }
+              return sum;
+            }, 0);
+            if (monthTitleEl) monthTitleEl.textContent = monthLabel(viewMonth);
+            if (monthTotalEl) {
+              monthTotalEl.textContent = String(total);
+              monthTotalEl.className = 'month-total ' + (total === 0 ? 'total-zero' : (total > 0 ? 'total-pos' : 'total-neg'));
+            }
+          }
+          function renderDaily() {
+            if (!tbody) return;
+            const v = String(dateInput?.value || '');
+            let sel = v ? new Date(`${v}T00:00:00`) : tzNow;
+            const y = sel.getFullYear();
+            const m = sel.getMonth();
+            const d = sel.getDate();
+            const rows = records
+              .filter((rec) => rec.dt.getFullYear() === y && rec.dt.getMonth() === m && rec.dt.getDate() === d)
+              .sort((a,b)=>b.dt - a.dt)
+              .map((rec) => {
+                const { statusFlag, reason, points } = calcPoints(rec);
+                return `<tr data-id="${rec.id}"><td>${formatDate(rec.dt)}</td><td>${reason}</td><td>${statusFlag}</td><td>${points}</td></tr>`;
+              }).join('');
+            tbody.innerHTML = rows;
+          }
+          if (dateInput) dateInput.value = ymd(tzNow);
+          renderMonth();
+          renderDaily();
+          prevBtn?.addEventListener('click', () => { viewMonth = new Date(viewMonth.getFullYear(), viewMonth.getMonth() - 1, 1); renderMonth(); });
+          nextBtn?.addEventListener('click', () => { viewMonth = new Date(viewMonth.getFullYear(), viewMonth.getMonth() + 1, 1); renderMonth(); });
+          dateInput?.addEventListener('change', () => { renderDaily(); });
+          const summaryBlock = container.querySelector('#leader-block-month-summary');
+          let sx = 0;
+          summaryBlock?.addEventListener('touchstart', (e) => { try { sx = e.touches?.[0]?.clientX || 0; } catch {} }, { passive: true });
+          summaryBlock?.addEventListener('touchend', (e) => { try { const ex = e.changedTouches?.[0]?.clientX || 0; const dx = ex - sx; if (dx < -50) { viewMonth = new Date(viewMonth.getFullYear(), viewMonth.getMonth() - 1, 1); renderMonth(); } else if (dx > 50) { viewMonth = new Date(viewMonth.getFullYear(), viewMonth.getMonth() + 1, 1); renderMonth(); } } catch {} }, { passive: true });
+        } catch (e) {
+          const msg = e?.message || e;
+          container.textContent = typeof msg === 'string' ? `載入失敗：${msg}` : "載入失敗";
+        }
+      })();
+      return;
+    }
     if (label === "班表") {
       const html = `
         <div class="roster-layout" role="region" aria-label="班表">
@@ -4304,8 +4784,9 @@ function applyPagePermissionsForUser(user) {
       const sel = document.getElementById("rosterOfficerSelect");
       if (sel) {
         const coId = appState.leaderCompanyFilter || null;
+        const allowedRoles = ["系統管理員","管理層","高階主管","初階主管","行政"];
         const officers = appState.accounts.filter((a) => {
-          const isOfficer = (a.role || "").includes("主管") || (a.role || "").includes("管理");
+          const isOfficer = allowedRoles.includes(String(a.role||""));
           if (!coId) return isOfficer;
           const ids = Array.isArray(a.companyIds) ? a.companyIds : (a.companyId ? [a.companyId] : []);
           return isOfficer && ids.includes(coId);
@@ -4618,8 +5099,8 @@ btnStart?.addEventListener("click", async () => {
 // ===== 上班打卡完整流程（位置 → 地圖 → 自拍 → 儲存） =====
 async function startCheckinFlow(statusKey = "work", statusLabel = "上班") {
   try {
-    const netOk = await ensureNetworkTime();
-    if (!netOk || navigator.onLine === false) { alert('無網路或無法取得網路時間，打卡失敗'); return; }
+    try { await ensureNetworkTime(); } catch {}
+    if (navigator.onLine === false) { alert('無網路，打卡失敗'); return; }
     const userRole = appState.currentUserRole || "保全";
     const adminRoles = new Set(["系統管理員", "管理層", "高階主管", "初階主管", "行政"]);
     const staffRoles = new Set(["總幹事", "秘書", "清潔", "機電", "保全"]);
@@ -5867,7 +6348,8 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
       if (info) info.textContent = `日期：${dateStr}`;
       const sel = document.getElementById("rosterOfficerSelect");
       if (sel) {
-        const officers = appState.accounts.filter((a) => (a.role || "").includes("主管") || (a.role || "").includes("管理"));
+        const allowedRoles = ["系統管理員","管理層","高階主管","初階主管","行政"];
+        const officers = appState.accounts.filter((a) => allowedRoles.includes(String(a.role||"")));
         const opts = officers.length ? officers : appState.accounts.slice(0, 10);
         opts.forEach((a) => {
           const opt = document.createElement("option");
@@ -6120,9 +6602,9 @@ async function loadRolesFromFirestore() {
       switch (r) {
         case '系統管理員': return ["home","checkin","leader","manage","feature","personnel","settings"]; 
         case '管理層': return ["home","checkin","leader","manage","feature","personnel"]; 
-        case '高階主管': return ["home","checkin","manage","feature"]; 
-        case '初階主管': return ["home","checkin","manage","feature"]; 
-        case '行政': return ["home","checkin","feature"]; 
+        case '高階主管': return ["home","checkin","leader","manage","feature"]; 
+        case '初階主管': return ["home","checkin","leader","manage","feature"]; 
+        case '行政': return ["home","checkin","leader","feature"]; 
         case '保全': return ["home","checkin","feature"]; 
         case '總幹事':
         case '秘書':
@@ -6147,9 +6629,9 @@ async function loadRolesFromFirestore() {
       switch (r) {
         case '系統管理員': return ["home","checkin","leader","manage","feature","personnel","settings"]; 
         case '管理層': return ["home","checkin","leader","manage","feature","personnel"]; 
-        case '高階主管': return ["home","checkin","manage","feature"]; 
-        case '初階主管': return ["home","checkin","manage","feature"]; 
-        case '行政': return ["home","checkin","feature"]; 
+        case '高階主管': return ["home","checkin","leader","manage","feature"]; 
+        case '初階主管': return ["home","checkin","leader","manage","feature"]; 
+        case '行政': return ["home","checkin","leader","feature"]; 
         case '保全': return ["home","checkin","feature"]; 
         case '總幹事':
         case '秘書':
