@@ -127,8 +127,16 @@ button[disabled] { cursor: not-allowed; }
   box-shadow: 0 6px 16px rgba(0,0,0,0.06);
 }
 .block-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.block-header.centered { justify-content: center; }
 .block-title { font-weight: 600; font-size: 15px; }
 .block-actions { display: flex; gap: 8px; }
+
+.month-total-label { text-align: center; color: #374151; font-size: 14px; }
+.month-total-wrap { display: flex; align-items: center; justify-content: center; }
+.month-total { font-size: 28px; font-weight: 700; }
+.month-total.total-zero { color: #111827; }
+.month-total.total-pos { color: #0f9d58; }
+.month-total.total-neg { color: #d93025; }
 
 .table { width: 100%; border-collapse: collapse; }
 .table thead th { text-align: left; font-size: 13px; color: #6b7280; border-bottom: 1px solid #e5e7eb; padding: 8px; white-space: nowrap; }

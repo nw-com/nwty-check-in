@@ -208,7 +208,7 @@ function renderHomeStatusText(str) {
     const locText = m ? (m[2] || "") : "";
     const nameText = (homeHeaderNameEl?.textContent || '').replace(/^歡迎~\s*/, '') || '';
     el.style.textAlign = "center";
-    el.innerHTML = `<div>${dateText}${nameText ? ` ${nameText}` : ''}</div><div>${nameText ? `${nameText} ` : ''}${locText ? `<span class="status-label ${statusCls}">${locText}</span> ` : ""}<span class="status-label ${statusCls}">${status}</span> <span class="status-flag ${flagCls}">${flag}</span></div>`;
+    el.innerHTML = `<div>${dateText}</div><div>${nameText ? `${nameText} ` : ''}${locText ? `<span class="status-label ${statusCls}">${locText}</span> ` : ""}<span class="status-label ${statusCls}">${status}</span> <span class="status-flag ${flagCls}">${flag}</span></div>`;
   } else {
     el.textContent = s;
   }
@@ -1815,7 +1815,48 @@ function showProfileModal(user, role) {
             if (roleInput) roleInput.value = d.role || roleInput.value || (typeof role === "string" ? role : "一般");
 
             // 計算本月計點（checkins 集合當月筆數）
-            if (monthlyInput) monthlyInput.value = "0";
+            if (monthlyInput) {
+              try {
+                await ensureFirebase();
+                let rules2 = appState.pointsRules || [];
+                if (!rules2 || !rules2.length) {
+                  try {
+                    const rref = fns.collection(db, 'pointsRules');
+                    const rsnap = await withRetry(() => fns.getDocs(rref));
+                    const list2 = [];
+                    rsnap.forEach((doc) => { const d2 = doc.data() || {}; list2.push({ id: doc.id, ...d2 }); });
+                    rules2 = list2;
+                    appState.pointsRules = list2;
+                  } catch {}
+                }
+                const ref2 = fns.collection(db, 'checkins');
+                const q2 = fns.query(ref2, fns.where('uid', '==', user.uid));
+                const snap2 = await withRetry(() => fns.getDocs(q2));
+                const tzNow2 = nowInTZ('Asia/Taipei');
+                const y2 = tzNow2.getFullYear();
+                const m2 = tzNow2.getMonth();
+                const start2 = new Date(y2, m2, 1);
+                const end2 = new Date(y2, m2 + 1, 1);
+                const calc2 = (rec) => {
+                  const flag = (rec.inRadius === true) ? '正常' : '異常';
+                  const st = String(rec.status || '').trim();
+                  const base = st.split('-')[0];
+                  const reason = base || st;
+                  const found = rules2.find((r) => String(r.reason||'') === reason && String(r.status||'') === flag) || null;
+                  return found ? Number(found.points || 0) : 0;
+                };
+                let total2 = 0;
+                snap2.forEach((doc) => {
+                  const d2 = doc.data() || {};
+                  let created2 = d2.createdAt;
+                  let dt2 = null;
+                  if (created2 && typeof created2.toDate === 'function') dt2 = created2.toDate(); else if (typeof created2 === 'string') dt2 = new Date(created2);
+                  if (!dt2) dt2 = new Date();
+                  if (dt2 >= start2 && dt2 < end2) total2 += calc2(d2);
+                });
+                monthlyInput.value = String(total2);
+              } catch {}
+            }
 
             // 通知顯示（若有 users 欄位）
             try {
@@ -5661,8 +5702,13 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
             appState.pointsRules = list;
           } catch {}
           const html = `
+            <div class="block" id="block-month-summary">
+              <div class="block-header centered"><span class="block-title" id="pointsMonthTitle"></span></div>
+              <div class="month-total-label">本月計點</div>
+              <div class="month-total-wrap"><div id="pointsMonthTotalValue" class="month-total">0</div></div>
+            </div>
             <div class="block" id="block-checkin-points">
-              <div class="block-header"><span class="block-title">計點列表</span><div class="block-actions"><span id="pointsMonthTotal">本月總計：0</span></div></div>
+              <div class="block-header"><span class="block-title">當日列表</span><div class="block-actions"><input id="pointsDateFilter" type="date" class="input" /></div></div>
               <div class="table-wrapper">
                 <table class="table" aria-label="計點列表">
                   <thead>
@@ -5688,19 +5734,17 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
             const found = rules.find((r) => String(r.reason||'') === reason && String(r.status||'') === statusFlag) || null;
             return { statusFlag, reason, points: found ? Number(found.points || 0) : 0 };
           };
-          if (tbody) {
-            const formatDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-            const rows = records.sort((a,b)=>b.dt - a.dt).map((rec) => {
-              const { statusFlag, reason, points } = calcPoints(rec);
-              return `<tr data-id="${rec.id}"><td>${formatDate(rec.dt)}</td><td>${reason}</td><td>${statusFlag}</td><td>${points}</td><td class="cell-actions"><button class="btn btn-orange" data-act="appeal">申訴</button></td></tr>`;
-            }).join('');
-            tbody.innerHTML = rows;
-          }
-          try {
-            const mEl = container.querySelector('#pointsMonthTotal');
-            const tzNow = nowInTZ('Asia/Taipei');
-            const y = tzNow.getFullYear();
-            const m = tzNow.getMonth();
+          const monthTitleEl = container.querySelector('#pointsMonthTitle');
+          const monthTotalEl = container.querySelector('#pointsMonthTotalValue');
+          const dateInput = container.querySelector('#pointsDateFilter');
+          const tzNow = nowInTZ('Asia/Taipei');
+          let viewMonth = new Date(tzNow.getFullYear(), tzNow.getMonth(), 1);
+          const monthLabel = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+          const formatDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+          const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+          function renderMonth() {
+            const y = viewMonth.getFullYear();
+            const m = viewMonth.getMonth();
             const start = new Date(y, m, 1);
             const end = new Date(y, m + 1, 1);
             const total = records.reduce((sum, rec) => {
@@ -5710,8 +5754,36 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
               }
               return sum;
             }, 0);
-            if (mEl) mEl.textContent = `本月總計：${total}`;
-          } catch {}
+            if (monthTitleEl) monthTitleEl.textContent = monthLabel(viewMonth);
+            if (monthTotalEl) {
+              monthTotalEl.textContent = String(total);
+              monthTotalEl.className = 'month-total ' + (total === 0 ? 'total-zero' : (total > 0 ? 'total-pos' : 'total-neg'));
+            }
+          }
+          function renderDaily() {
+            if (!tbody) return;
+            const v = String(dateInput?.value || '');
+            let sel = v ? new Date(`${v}T00:00:00`) : tzNow;
+            const y = sel.getFullYear();
+            const m = sel.getMonth();
+            const d = sel.getDate();
+            const rows = records
+              .filter((rec) => rec.dt.getFullYear() === y && rec.dt.getMonth() === m && rec.dt.getDate() === d)
+              .sort((a,b)=>b.dt - a.dt)
+              .map((rec) => {
+                const { statusFlag, reason, points } = calcPoints(rec);
+                return `<tr data-id="${rec.id}"><td>${formatDate(rec.dt)}</td><td>${reason}</td><td>${statusFlag}</td><td>${points}</td><td class="cell-actions"><button class="btn btn-orange" data-act="appeal">申訴</button></td></tr>`;
+              }).join('');
+            tbody.innerHTML = rows;
+          }
+          if (dateInput) dateInput.value = ymd(tzNow);
+          renderMonth();
+          renderDaily();
+          dateInput?.addEventListener('change', () => { renderDaily(); });
+          const summaryBlock = container.querySelector('#block-month-summary');
+          let sx = 0;
+          summaryBlock?.addEventListener('touchstart', (e) => { try { sx = e.touches?.[0]?.clientX || 0; } catch {} }, { passive: true });
+          summaryBlock?.addEventListener('touchend', (e) => { try { const ex = e.changedTouches?.[0]?.clientX || 0; const dx = ex - sx; if (dx < -50) { viewMonth = new Date(viewMonth.getFullYear(), viewMonth.getMonth() - 1, 1); renderMonth(); } else if (dx > 50) { viewMonth = new Date(viewMonth.getFullYear(), viewMonth.getMonth() + 1, 1); renderMonth(); } } catch {} }, { passive: true });
           const table = container.querySelector('#block-checkin-points table');
           table?.addEventListener('click', async (e) => {
             const t = e.target;
