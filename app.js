@@ -3317,6 +3317,7 @@ let ensureFirebasePromise = null;
       try { await flushPendingAccounts(); } catch {}
 
       // 依帳號「頁面權限」控制可見的分頁（首頁永遠顯示）
+      try { await loadRolesFromFirestore(); } catch {}
       applyPagePermissionsForUser(user);
 
         // 紀錄目前裝置型號至 Firestore（供其他裝置顯示）
