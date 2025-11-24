@@ -114,17 +114,30 @@ async function initNetworkTime() {
   if (navigator.onLine === false) { appState.networkTimeOk = false; appState.timeOffsetMs = 0; return; }
   let ok = false;
   try {
-    const c2 = new AbortController();
-    const t2 = setTimeout(() => { try { c2.abort(); } catch {} }, 5000);
-    let res2;
+    const c1 = new AbortController();
+    const t1 = setTimeout(() => { try { c1.abort(); } catch {} }, 5000);
+    let res1;
     try {
-      res2 = await fetch('https://timeapi.io/api/Time/current/zone?timeZone=Asia/Taipei', { cache: 'no-store', signal: c2.signal });
-    } finally { clearTimeout(t2); }
-    if (!res2.ok) throw new Error('time api 2');
-    const j2 = await res2.json();
-    const netStr = `${j2.date}T${j2.time}`;
-    const netUtc2 = Date.parse(netStr);
-    if (!isNaN(netUtc2)) { appState.timeOffsetMs = netUtc2 - Date.now(); ok = true; }
+      res1 = await fetch('https://worldtimeapi.org/api/timezone/Asia/Taipei', { cache: 'no-store', signal: c1.signal });
+    } finally { clearTimeout(t1); }
+    if (res1 && res1.ok) {
+      const j1 = await res1.json();
+      const netUtc1 = (typeof j1.unixtime === 'number') ? (j1.unixtime * 1000) : Date.parse(String(j1.datetime || ''));
+      if (!isNaN(netUtc1)) { appState.timeOffsetMs = netUtc1 - Date.now(); ok = true; }
+    }
+    if (!ok) {
+      const c2 = new AbortController();
+      const t2 = setTimeout(() => { try { c2.abort(); } catch {} }, 5000);
+      let res2;
+      try {
+        res2 = await fetch('https://timeapi.io/api/Time/current/zone?timeZone=Asia/Taipei', { cache: 'no-store', signal: c2.signal });
+      } finally { clearTimeout(t2); }
+      if (!res2.ok) throw new Error('time api 2');
+      const j2 = await res2.json();
+      const netStr = `${j2.date}T${j2.time}+08:00`;
+      const netUtc2 = Date.parse(netStr);
+      if (!isNaN(netUtc2)) { appState.timeOffsetMs = netUtc2 - Date.now(); ok = true; }
+    }
   } catch {}
   appState.networkTimeOk = !!ok;
   if (!ok) { appState.timeOffsetMs = 0; }
@@ -133,8 +146,16 @@ async function ensureNetworkTime() { if (appState.networkTimeOk) return true; aw
 function networkNowMs() { return Date.now() + (appState.timeOffsetMs || 0); }
 function nowInTZ(tz) {
   const base = new Date(networkNowMs());
-  const str = base.toLocaleString('en-US', { timeZone: tz });
-  return new Date(str);
+  const fmt = new Intl.DateTimeFormat('en-GB', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  const parts = fmt.formatToParts(base);
+  const pick = (t) => parts.find((p) => p.type === t)?.value || '0';
+  const y = Number(pick('year'));
+  const m = Number(pick('month')) - 1;
+  const d = Number(pick('day'));
+  const hh = Number(pick('hour'));
+  const mm = Number(pick('minute'));
+  const ss = Number(pick('second'));
+  return new Date(y, m, d, hh, mm, ss);
 }
 function formatDateYYYYMMDD(d) {
   return d.getFullYear() + '-' + two(d.getMonth() + 1) + '-' + two(d.getDate());
