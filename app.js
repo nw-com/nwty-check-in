@@ -812,7 +812,7 @@ async function initDeviceProfile() {
       model: getLocalDeviceModel(),
       ua: navigator.userAgent || "",
       platform: (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "",
-      updatedAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date().toISOString(),
+      updatedAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date(networkNowMs()).toISOString(),
     };
     await withRetry(() => fns.setDoc(fns.doc(db, "devices", id), payload, { merge: true }));
     setDeviceModelCache(id, payload.model);
@@ -1471,7 +1471,7 @@ async function importCommunitiesFromXLSX(file) {
         regionId,
         coords: r["定位座標"] || "",
         radiusMeters: r["有效打卡範圍半徑(公尺)"] !== "" ? Number(r["有效打卡範圍半徑(公尺)"]) : null,
-        createdAt: fns?.serverTimestamp ? fns.serverTimestamp() : new Date().toISOString(),
+        createdAt: fns?.serverTimestamp ? fns.serverTimestamp() : new Date(networkNowMs()).toISOString(),
       };
       let idNew = null;
       if (db && fns?.addDoc && fns?.collection) {
@@ -1550,7 +1550,7 @@ async function importAccountsFromXLSX(file) {
         companyIds: companyId ? [companyId] : [],
         serviceCommunities: serviceIds,
         status: r["狀況"] || "在職",
-        updatedAt: fns?.serverTimestamp ? fns.serverTimestamp() : new Date().toISOString(),
+        updatedAt: fns?.serverTimestamp ? fns.serverTimestamp() : new Date(networkNowMs()).toISOString(),
       };
       // 以 Email 去重：存在則更新，否則新增
       let targetId = appState.accounts.find((a) => a.email && email && a.email.toLowerCase() === email.toLowerCase())?.id || null;
@@ -2046,7 +2046,7 @@ function renderSettingsGeneral() {
       ],
       onSubmit: async (data) => {
         try {
-          const payload = { name: data.name || "", coords: data.coords || "", radiusMeters: data.radiusMeters ?? null, order: (data.order != null ? Number(data.order) : null), createdAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date().toISOString() };
+          const payload = { name: data.name || "", coords: data.coords || "", radiusMeters: data.radiusMeters ?? null, order: (data.order != null ? Number(data.order) : null), createdAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date(networkNowMs()).toISOString() };
           if (db && fns.addDoc && fns.collection) {
             const docRef = await withRetry(() => fns.addDoc(fns.collection(db, "companies"), payload));
             appState.companies.push({ id: docRef.id, name: payload.name, coords: payload.coords, radiusMeters: payload.radiusMeters, order: payload.order ?? null });
@@ -2148,7 +2148,7 @@ function renderSettingsGeneral() {
             try {
               const next = { name: data.name ?? co.name, coords: data.coords ?? co.coords, radiusMeters: data.radiusMeters ?? co.radiusMeters ?? null, order: (data.order != null ? Number(data.order) : (co.order ?? null)) };
               if (db && fns.setDoc && fns.doc) {
-                await withRetry(() => fns.setDoc(fns.doc(db, "companies", cid), { ...next, updatedAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date().toISOString() }, { merge: true }));
+                await withRetry(() => fns.setDoc(fns.doc(db, "companies", cid), { ...next, updatedAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date(networkNowMs()).toISOString() }, { merge: true }));
               }
               co.name = next.name;
               co.coords = next.coords;
@@ -2256,7 +2256,7 @@ function renderSettingsGeneral() {
       fields: [{ key: "name", label: "名稱", type: "text" }],
       onSubmit: async (data) => {
         try {
-          const payload = { name: data.name || "", createdAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date().toISOString() };
+          const payload = { name: data.name || "", createdAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date(networkNowMs()).toISOString() };
           if (db && fns.addDoc && fns.collection) {
             const docRef = await withRetry(() => fns.addDoc(fns.collection(db, "regions"), payload));
             appState.regions.push({ id: docRef.id, name: payload.name });
@@ -2284,7 +2284,7 @@ function renderSettingsGeneral() {
           try {
             const next = { name: d.name ?? r.name };
             if (db && fns.setDoc && fns.doc) {
-              await withRetry(() => fns.setDoc(fns.doc(db, "regions", rid), { ...next, updatedAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date().toISOString() }, { merge: true }));
+              await withRetry(() => fns.setDoc(fns.doc(db, "regions", rid), { ...next, updatedAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date(networkNowMs()).toISOString() }, { merge: true }));
             }
             r.name = next.name;
             renderSettingsContent("一般");
@@ -3461,7 +3461,7 @@ let ensureFirebasePromise = null;
             reason: String(data.reason || ''),
             attachmentData: String(data.attachment || window.__leaveAttachmentData || ''),
             status: '送審',
-            createdAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date().toISOString(),
+            createdAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date(networkNowMs()).toISOString(),
           };
           let saved = false;
           if (db && fns.addDoc && fns.collection) {
@@ -3469,7 +3469,7 @@ let ensureFirebasePromise = null;
           }
           if (!saved) {
             const p2 = { ...payload };
-            if (typeof p2.createdAt !== 'string') p2.createdAt = new Date().toISOString();
+            if (typeof p2.createdAt !== 'string') p2.createdAt = new Date(networkNowMs()).toISOString();
             enqueuePendingLeave(p2);
           }
           alert('已送出請假申請');
@@ -3575,7 +3575,7 @@ let ensureFirebasePromise = null;
             place: selected ? (selected.label || '') : '',
             status: String(data.status || ''),
             datetime: String(data.datetime || ''),
-            createdAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date().toISOString(),
+            createdAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date(networkNowMs()).toISOString(),
           };
           if (db && fns.addDoc && fns.collection) {
             await withRetry(() => fns.addDoc(fns.collection(db, 'makeupRequests'), payload));
@@ -4994,7 +4994,7 @@ try {
           model: getLocalDeviceModel(),
           ua: navigator.userAgent || '',
           platform: (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '',
-          updatedAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date().toISOString(),
+          updatedAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date(networkNowMs()).toISOString(),
         }, { merge: true }));
       }
     }
@@ -5016,7 +5016,7 @@ try {
         photoData: photoDataUrl.photo,
         deviceId: getDeviceId(),
         deviceModel: getLocalDeviceModel(),
-        createdAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date().toISOString(),
+        createdAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date(networkNowMs()).toISOString(),
       };
       if ((statusKey === 'out' || statusKey === 'arrive' || statusKey === 'leave') && selectedLocation && selectedLocation.reason) { payload.reason = selectedLocation.reason; }
       let saved = false;
@@ -5293,7 +5293,7 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
                           status: String(data.status || ''),
                           datetime: String(data.datetime || ''),
                         },
-                        createdAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date().toISOString(),
+                        createdAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date(networkNowMs()).toISOString(),
                       };
                       if (db && fns.addDoc && fns.collection) {
                         await withRetry(() => fns.addDoc(fns.collection(db, 'changeRequests'), payload));
@@ -5471,7 +5471,7 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
                         startAt: String(data.startAt || ''),
                         endAt: String(data.endAt || ''),
                         reason: String(data.reason || ''),
-                        updatedAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date().toISOString(),
+                        updatedAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date(networkNowMs()).toISOString(),
                       };
                       if (data.deletePhoto) {
                         payload.attachmentData = '';
@@ -5643,7 +5643,7 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
                       reason: String(data.reason || ''),
                       attachmentData: String(data.attachment || window.__leaveAttachmentData || ''),
                       status: '送審',
-                      createdAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date().toISOString(),
+                      createdAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date(networkNowMs()).toISOString(),
                     };
                     let saved = false;
                     let record = null;
@@ -5835,7 +5835,7 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
                 try {
                   await ensureFirebase();
                   const u = auth?.currentUser || null;
-                  const payload = { uid: u?.uid || null, checkinId: rec.id, reason: reason || '', status: statusFlag, points, appealText: String(data.appealText || ''), createdAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date().toISOString(), state: '送審' };
+                  const payload = { uid: u?.uid || null, checkinId: rec.id, reason: reason || '', status: statusFlag, points, appealText: String(data.appealText || ''), createdAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date(networkNowMs()).toISOString(), state: '送審' };
                   if (db && fns.addDoc && fns.collection) { await withRetry(() => fns.addDoc(fns.collection(db, 'pointAppeals'), payload)); }
                   t.textContent = '已申訴'; t.disabled = true;
                   return true;
@@ -6173,6 +6173,19 @@ async function loadRolesFromFirestore() {
     appState.rolesConfig = union.map((name) => ({ id: null, name, allowedTabs: defMap(name) }));
     if (typeof window !== 'undefined') window.Roles = (appState.rolesConfig || []).map((r) => r.name);
   }
+  // 合併本機覆蓋（權限不足時的暫存持久化）
+  try {
+    const ovRaw = localStorage.getItem('rolesOverrides') || '{}';
+    const ov = JSON.parse(ovRaw);
+    if (ov && typeof ov === 'object') {
+      Object.keys(ov).forEach((name) => {
+        const tabs = Array.isArray(ov[name]) ? ov[name] : [];
+        const idx = (appState.rolesConfig || []).findIndex((x) => String(x.name||'') === String(name));
+        if (idx >= 0) appState.rolesConfig[idx] = { ...(appState.rolesConfig[idx] || {}), allowedTabs: tabs };
+        else (appState.rolesConfig || (appState.rolesConfig=[])).push({ id: null, name, allowedTabs: tabs });
+      });
+    }
+  } catch {}
 }
 
 function renderSettingsRoles() {
@@ -6209,7 +6222,19 @@ function renderSettingsRoles() {
     await loadRolesFromFirestore();
     const rows = (appState.rolesConfig || []).map((r) => {
       const tabs = Array.isArray(r.allowedTabs) ? r.allowedTabs.map((t) => toLabel(t)).join('、') : '';
-      return `<tr data-id="${r.id || ''}"><td>${r.name}</td><td>${tabs}</td><td class="cell-actions"><button class="btn" data-act="edit">編輯</button>${isAdmin ? '<button class="btn" data-act="del">刪除</button>' : ''}</td></tr>`;
+      return `<tr data-id="${r.id || ''}" data-name="${r.name}"><td>${r.name}</td><td>${tabs}</td><td class="cell-actions"><button class="btn" data-act="edit">編輯</button>${isAdmin ? '<button class="btn" data-act="del">刪除</button>' : ''}</td></tr>`;
+    }).sort((aHtml, bHtml) => {
+      const getName = (rowHtml) => {
+        const m = rowHtml.match(/data-name="([^"]+)"/);
+        return m ? m[1] : '';
+      };
+      const desired = ["系統管理員","管理層","高階主管","初階主管","行政","總幹事","秘書","清潔","機電","保全"];
+      const pos = new Map(desired.map((n,i)=>[n,i]));
+      const an = getName(aHtml); const bn = getName(bHtml);
+      const ai = pos.has(an) ? pos.get(an) : 999;
+      const bi = pos.has(bn) ? pos.get(bn) : 999;
+      if (ai !== bi) return ai - bi;
+      return an.localeCompare(bn, 'zh-Hant');
     }).join('');
     if (tbody) tbody.innerHTML = rows;
   })();
@@ -6228,11 +6253,14 @@ function renderSettingsRoles() {
           const payload = { name: String(d.name||''), allowedTabs: Array.isArray(d.allowedTabs) ? d.allowedTabs : [] };
           let docId = null;
           if (db && fns.addDoc && fns.collection) {
-            const ref = await withRetry(() => fns.addDoc(fns.collection(db, 'roles'), payload));
-            docId = ref.id;
+            try { const ref = await withRetry(() => fns.addDoc(fns.collection(db, 'roles'), payload)); docId = ref.id; } catch {}
           }
-          if (!docId) throw new Error('新增失敗');
-          appState.rolesConfig.push({ id: docId, ...payload });
+          if (docId) {
+            appState.rolesConfig.push({ id: docId, ...payload });
+          } else {
+            appState.rolesConfig.push({ id: null, ...payload });
+            try { const raw = localStorage.getItem('rolesOverrides') || '{}'; const map = JSON.parse(raw); map[payload.name] = payload.allowedTabs; localStorage.setItem('rolesOverrides', JSON.stringify(map)); } catch {}
+          }
           if (typeof window !== 'undefined') window.Roles = (appState.rolesConfig || []).map((x) => x.name);
           renderSettingsRoles();
           return true;
@@ -6244,8 +6272,10 @@ function renderSettingsRoles() {
   table?.addEventListener('click', async (e) => {
     const t = e.target; if (!(t instanceof HTMLElement)) return;
     const act = t.dataset.act || ''; if (!act) return;
-    const tr = t.closest('tr'); const idv = tr?.getAttribute('data-id') || '';
-    const idx = (appState.rolesConfig || []).findIndex((x) => (x.id || '') === idv);
+    const tr = t.closest('tr'); const idv = tr?.getAttribute('data-id') || ''; const namev = tr?.getAttribute('data-name') || '';
+    let idx = -1;
+    if (idv) idx = (appState.rolesConfig || []).findIndex((x) => (x.id || '') === idv);
+    if (idx < 0 && namev) idx = (appState.rolesConfig || []).findIndex((x) => String(x.name || '') === String(namev));
     const r = idx >= 0 ? appState.rolesConfig[idx] : null;
     if (act === 'edit') {
       openModal({
@@ -6263,15 +6293,21 @@ function renderSettingsRoles() {
             if (r?.id && db && fns.updateDoc && fns.doc) {
               await withRetry(() => fns.updateDoc(fns.doc(db, 'roles', r.id), payload));
               appState.rolesConfig[idx] = { ...(r || {}), ...payload };
+              try { const raw = localStorage.getItem('rolesOverrides') || '{}'; const map = JSON.parse(raw); delete map[payload.name]; localStorage.setItem('rolesOverrides', JSON.stringify(map)); } catch {}
             } else {
               // 自動帶入（id 為 null）的角色，於編輯儲存時建立文件
               let docId = null;
               if (db && fns.addDoc && fns.collection) {
-                const ref = await withRetry(() => fns.addDoc(fns.collection(db, 'roles'), payload));
-                docId = ref.id;
+                try { const ref = await withRetry(() => fns.addDoc(fns.collection(db, 'roles'), payload)); docId = ref.id; } catch {}
               }
-              if (!docId) throw new Error('建立角色失敗');
-              appState.rolesConfig[idx] = { id: docId, ...payload };
+              if (docId) {
+                appState.rolesConfig[idx] = { id: docId, ...payload };
+                try { const raw = localStorage.getItem('rolesOverrides') || '{}'; const map = JSON.parse(raw); delete map[payload.name]; localStorage.setItem('rolesOverrides', JSON.stringify(map)); } catch {}
+              } else {
+                // 權限不足或寫入失敗：改為本機覆蓋並套用
+                appState.rolesConfig[idx] = { id: null, ...payload };
+                try { const raw = localStorage.getItem('rolesOverrides') || '{}'; const map = JSON.parse(raw); map[payload.name] = payload.allowedTabs; localStorage.setItem('rolesOverrides', JSON.stringify(map)); } catch {}
+              }
             }
             if (typeof window !== 'undefined') window.Roles = (appState.rolesConfig || []).map((x) => x.name);
             renderSettingsRoles();

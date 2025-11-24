@@ -108,5 +108,13 @@ service cloud.firestore {
       allow update: if isAdmin();
       allow delete: if isAdmin();
     }
+
+    // 角色設定：登入者可讀；僅系統管理員可寫入
+    match /roles/{docId} {
+      allow read: if isLoggedIn();
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
   }
 }
