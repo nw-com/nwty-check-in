@@ -1703,14 +1703,15 @@ function showProfileModal(user, role) {
     name: user.displayName || "",
     email: user.email || "",
     role: role || "一般",
+    title: "",
     phone: "",
   };
   openModal({
-    title: "個人資訊",
+    title: `個人資訊(${role})`,
     submitText: "關閉",
     initial,
     fields: [
-      { key: "role", label: "角色", type: "select", options: getRoles().map((r)=>({value:r,label:r})), readonly: true },
+      { key: "title", label: "職稱", type: "text", readonly: true },
       { key: "photoUrl", label: "大頭照", type: "file", readonly: true },
       { key: "name", label: "姓名", type: "text", readonly: true },
       { key: "email", label: "電子郵件", type: "email", readonly: true },
@@ -1820,14 +1821,14 @@ function showProfileModal(user, role) {
             // 姓名、Email、角色 顯示
             const nameInput = body.querySelector('[data-key="name"]');
             const emailInput = body.querySelector('[data-key="email"]');
-            const roleInput = body.querySelector('[data-key="role"]');
+            const titleInput = body.querySelector('[data-key="title"]');
             const phoneInput = body.querySelector('[data-key="phone"]');
             const monthlyInput = body.querySelector('[data-key="monthlyPoints"]');
             const notifInput = body.querySelector('[data-key="notifications"]');
             if (nameInput) nameInput.value = d.name || user.displayName || nameInput.value || "";
             if (emailInput) emailInput.value = d.email || user.email || emailInput.value || "";
             if (phoneInput) phoneInput.value = d.phone || phoneInput.value || "";
-            if (roleInput) roleInput.value = d.role || roleInput.value || (typeof role === "string" ? role : "一般");
+            if (titleInput) titleInput.value = d.title || titleInput.value || "";
 
             // 計算本月計點（checkins 集合當月筆數）
             if (monthlyInput) {
@@ -1906,18 +1907,7 @@ function showProfileModal(user, role) {
         if (emailInput?.parentElement) emailInput.parentElement.remove();
         const phoneInput = body.querySelector('[data-key="phone"]');
         if (phoneInput?.parentElement) phoneInput.parentElement.remove();
-        // 角色選擇改為純文字顯示、移除下拉箭頭
-        const roleInput = body.querySelector('[data-key="role"]');
-        if (roleInput) {
-          roleInput.disabled = false;
-          roleInput.style.webkitAppearance = '';
-          roleInput.style.mozAppearance = '';
-          roleInput.style.appearance = '';
-          roleInput.style.background = '';
-          roleInput.style.pointerEvents = '';
-          roleInput.style.textAlign = '';
-          roleInput.style.border = '';
-        }
+        // 職稱僅顯示文字，不提供下拉選項
         // 「儲存」按鈕字體與「登出」一致
         // （已移除主按鈕）
       } catch {}
