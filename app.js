@@ -139,6 +139,44 @@ function nowInTZ(tz) {
 function formatDateYYYYMMDD(d) {
   return d.getFullYear() + '-' + two(d.getMonth() + 1) + '-' + two(d.getDate());
 }
+function formatYmdTZ(d, tz) {
+  try {
+    const fmt = new Intl.DateTimeFormat('sv-SE', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' });
+    return fmt.format(d);
+  } catch {
+    const dd = nowInTZ(tz);
+    return dd.getFullYear() + '-' + two(dd.getMonth() + 1) + '-' + two(dd.getDate());
+  }
+}
+function formatDateTimeTZ(d, tz) {
+  try {
+    const ymd = formatYmdTZ(d, tz);
+    const t = new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(d);
+    return `${ymd} ${t}`;
+  } catch {
+    const dd = nowInTZ(tz);
+    return `${formatDateYYYYMMDD(dd)} ${two(dd.getHours())}:${two(dd.getMinutes())}:${two(dd.getSeconds())}`;
+  }
+}
+function formatYmTZ(d, tz) {
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit' }).format(d).split('-');
+    return `${parts[0]}-${parts[1]}`;
+  } catch {
+    const dd = nowInTZ(tz);
+    return `${dd.getFullYear()}-${two(dd.getMonth() + 1)}`;
+  }
+}
+function formatDatetimeLocalTZ(d, tz) {
+  try {
+    const date = new Intl.DateTimeFormat('sv-SE', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+    const time = new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false }).format(d);
+    return `${date}T${time}`;
+  } catch {
+    const dd = nowInTZ(tz);
+    return `${formatDateYYYYMMDD(dd)}T${two(dd.getHours())}:${two(dd.getMinutes())}`;
+  }
+}
 // 近似判斷當日是否為 24 節氣（本地時區），若符合顯示節氣名稱
 function getApproxSolarTerm(date) {
   const md = two(date.getMonth() + 1) + '-' + two(date.getDate());
@@ -4015,7 +4053,7 @@ function applyPagePermissionsForUser(user) {
         </div>`;
       container.innerHTML = html;
       const info = document.getElementById("rosterInfo");
-      const dt = new Date();
+      const dt = nowInTZ('Asia/Taipei');
       // 在資訊區建立日期與列表
       if (info) {
         info.innerHTML = `
@@ -4274,7 +4312,7 @@ function applyPagePermissionsForUser(user) {
           while (cells.length % 7 !== 0) cells.push("");
           const rows = [];
           for (let i = 0; i < cells.length; i += 7) rows.push(cells.slice(i, i + 7));
-          const today = new Date();
+          const today = nowInTZ('Asia/Taipei');
           const isSameMonth = today.getFullYear() === date.getFullYear() && today.getMonth() === date.getMonth();
           const headerHtml = `
             <div class="roster-cal-header" role="group" aria-label="月曆導航">
@@ -4413,14 +4451,9 @@ function applyPagePermissionsForUser(user) {
           if (!listRoot || !dateInput) return;
           dateInput.value = todayYmd;
           function renderForDate(ymdStr) {
-            const parts = String(ymdStr || '').split('-');
-            if (parts.length !== 3) return;
-            const y = Number(parts[0]);
-            const m = Number(parts[1]) - 1;
-            const d = Number(parts[2]);
-            const d0 = new Date(y, m, d);
-            const d1 = new Date(d0); d1.setDate(d0.getDate() + 1);
-            const dayList = list.filter((r) => r.dt >= d0 && r.dt < d1).sort((a, b) => b.dt - a.dt).slice(0, 100);
+            const sel = String(ymdStr || '').trim();
+            if (!sel) return;
+            const dayList = list.filter((r) => formatYmdTZ(r.dt, 'Asia/Taipei') === sel).sort((a, b) => b.dt - a.dt).slice(0, 100);
             listRoot.innerHTML = '';
             if (!dayList.length) { listRoot.textContent = '該日無打卡紀錄'; return; }
             dayList.forEach((r) => {
@@ -4452,7 +4485,7 @@ function applyPagePermissionsForUser(user) {
               })();
               const nameText = r.name || '使用者';
               status.innerHTML = `${nameText} 打卡地點：<span class="status-label ${stCls}">${place}</span> 狀態：<span class="status-label ${stCls}">${stDisplay}</span>${flagHtml}`;
-              const dtStr = `${r.dt.getFullYear()}-${String(r.dt.getMonth()+1).padStart(2,'0')}-${String(r.dt.getDate()).padStart(2,'0')} ${String(r.dt.getHours()).padStart(2,'0')}:${String(r.dt.getMinutes()).padStart(2,'0')}:${String(r.dt.getSeconds()).padStart(2,'0')}`;
+              const dtStr = formatDateTimeTZ(r.dt, 'Asia/Taipei');
               const when = document.createElement('div');
               when.textContent = `時間：${dtStr}`;
               card.appendChild(status);
@@ -4550,19 +4583,13 @@ function applyPagePermissionsForUser(user) {
           const listRoot = container.querySelector('#leaderLeaveList');
           if (!monthInput || !listRoot) return;
           monthInput.value = todayYm;
-          const formatDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-          const formatDT = (d) => `${formatDate(d)} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+          const formatDT = (d) => formatDateTimeTZ(d, 'Asia/Taipei');
           function renderForMonth(ymStr) {
-            const parts = String(ymStr || '').split('-');
-            if (parts.length !== 2) return;
-            const y = Number(parts[0]);
-            const m = Number(parts[1]) - 1;
-            const start = new Date(y, m, 1);
-            const end = new Date(y, m + 1, 1);
+            const selYm = String(ymStr || '').trim();
             const selUid = String(nameFilter?.value || '').trim();
             const monthList = list.filter((r) => {
               const base = r.sdt instanceof Date && !isNaN(r.sdt) ? r.sdt : r.dt;
-              const inMonth = base >= start && base < end;
+              const inMonth = formatYmTZ(base, 'Asia/Taipei') === selYm;
               const byName = !selUid || String(r.uid||'') === selUid;
               return inMonth && byName;
             }).sort((a, b) => b.dt - a.dt);
@@ -4584,7 +4611,7 @@ function applyPagePermissionsForUser(user) {
               const st = r.status || '送審';
               status.innerHTML = `${nameText} 類型：<span class="status-label work">${typeText}</span> 時段：<span class="status-label arrive">${sStr}</span> → <span class="status-label leave">${eStr}</span> 原因：<span class="status-label return">${reason || '無'}</span> 狀態：<span class="status-label ${st==='核准'?'work':'out'}">${st}</span>`;
               const when = document.createElement('div');
-              const dtStr = `${r.dt.getFullYear()}-${String(r.dt.getMonth()+1).padStart(2,'0')}-${String(r.dt.getDate()).padStart(2,'0')} ${String(r.dt.getHours()).padStart(2,'0')}:${String(r.dt.getMinutes()).padStart(2,'0')}:${String(r.dt.getSeconds()).padStart(2,'0')}`;
+              const dtStr = formatDateTimeTZ(r.dt, 'Asia/Taipei');
               when.textContent = `建立：${dtStr}`;
               const actions = document.createElement('div');
               actions.className = 'record-actions';
@@ -5793,7 +5820,7 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
               })();
               const nameText = r.name || '使用者';
               status.innerHTML = `${nameText} 打卡地點：<span class="status-label ${stCls}">${place}</span> 狀態：<span class="status-label ${stCls}">${stDisplay}</span>${flagHtml}`;
-              const dtStr = `${r.dt.getFullYear()}-${String(r.dt.getMonth()+1).padStart(2,'0')}-${String(r.dt.getDate()).padStart(2,'0')} ${String(r.dt.getHours()).padStart(2,'0')}:${String(r.dt.getMinutes()).padStart(2,'0')}:${String(r.dt.getSeconds()).padStart(2,'0')}`;
+              const dtStr = formatDateTimeTZ(r.dt, 'Asia/Taipei');
               const when = document.createElement('div');
               when.textContent = `時間：${dtStr}`;
               const devCode = r.deviceId ? String(r.deviceId) : '';
@@ -6040,7 +6067,7 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
               const st = r.status || '送審';
               status.innerHTML = `${nameText} 類型：<span class="status-label work">${typeText}</span> 時段：<span class="status-label arrive">${sStr}</span> → <span class="status-label leave">${eStr}</span> 原因：<span class="status-label return">${reason || '無'}</span> 狀態：<span class="status-label ${st==='核准'?'work':'out'}">${st}</span>`;
               const when = document.createElement('div');
-              const dtStr = `${r.dt.getFullYear()}-${String(r.dt.getMonth()+1).padStart(2,'0')}-${String(r.dt.getDate()).padStart(2,'0')} ${String(r.dt.getHours()).padStart(2,'0')}:${String(r.dt.getMinutes()).padStart(2,'0')}:${String(r.dt.getSeconds()).padStart(2,'0')}`;
+              const dtStr = formatDateTimeTZ(r.dt, 'Asia/Taipei');
               when.textContent = `建立：${dtStr}`;
               const btnEdit = document.createElement('button');
               btnEdit.className = 'btn btn-blue';
@@ -6064,8 +6091,8 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
               btnDel.title = btnDel.disabled ? '已核准無法刪除' : '';
               btnEdit.addEventListener('click', () => {
                 if (btnEdit.disabled) return;
-                const initS = r.sdt instanceof Date && !isNaN(r.sdt) ? `${r.sdt.getFullYear()}-${String(r.sdt.getMonth()+1).padStart(2,'0')}-${String(r.sdt.getDate()).padStart(2,'0')}T${String(r.sdt.getHours()).padStart(2,'0')}:${String(r.sdt.getMinutes()).padStart(2,'0')}` : '';
-                const initE = r.edt instanceof Date && !isNaN(r.edt) ? `${r.edt.getFullYear()}-${String(r.edt.getMonth()+1).padStart(2,'0')}-${String(r.edt.getDate()).padStart(2,'0')}T${String(r.edt.getHours()).padStart(2,'0')}:${String(r.edt.getMinutes()).padStart(2,'0')}` : '';
+                const initS = r.sdt instanceof Date && !isNaN(r.sdt) ? formatDatetimeLocalTZ(r.sdt, 'Asia/Taipei') : '';
+                const initE = r.edt instanceof Date && !isNaN(r.edt) ? formatDatetimeLocalTZ(r.edt, 'Asia/Taipei') : '';
                 openModal({
                   title: '編輯請假',
                   fields: [
