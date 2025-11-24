@@ -87,7 +87,16 @@ try {
       if (a && a.message) return String(a.message);
       return '';
     }).join(' ');
-    if (text.includes('Firestore/Listen/channel') || text.includes('documents:runQuery') || text.includes('documents:batchGet') || text.includes('@firebase/firestore') || text.includes('RPC_ERROR') || text.includes('ERR_ABORTED')) return;
+    if (
+      text.includes('Firestore/Listen/channel') ||
+      text.includes('documents:runQuery') ||
+      text.includes('documents:batchGet') ||
+      text.includes('documents:commit') ||
+      text.includes('@firebase/firestore') ||
+      text.includes('RPC_ERROR') ||
+      text.includes('ERR_ABORTED') ||
+      text.includes('ERR_CONNECTION_RESET')
+    ) return;
     return origErr.apply(console, args);
   };
 } catch {}
@@ -114,30 +123,17 @@ async function initNetworkTime() {
   if (navigator.onLine === false) { appState.networkTimeOk = false; appState.timeOffsetMs = 0; return; }
   let ok = false;
   try {
-    const c1 = new AbortController();
-    const t1 = setTimeout(() => { try { c1.abort(); } catch {} }, 5000);
-    let res1;
+    const c2 = new AbortController();
+    const t2 = setTimeout(() => { try { c2.abort(); } catch {} }, 5000);
+    let res2;
     try {
-      res1 = await fetch('https://worldtimeapi.org/api/timezone/Asia/Taipei', { cache: 'no-store', signal: c1.signal });
-    } finally { clearTimeout(t1); }
-    if (res1 && res1.ok) {
-      const j1 = await res1.json();
-      const netUtc1 = (typeof j1.unixtime === 'number') ? (j1.unixtime * 1000) : Date.parse(String(j1.datetime || ''));
-      if (!isNaN(netUtc1)) { appState.timeOffsetMs = netUtc1 - Date.now(); ok = true; }
-    }
-    if (!ok) {
-      const c2 = new AbortController();
-      const t2 = setTimeout(() => { try { c2.abort(); } catch {} }, 5000);
-      let res2;
-      try {
-        res2 = await fetch('https://timeapi.io/api/Time/current/zone?timeZone=Asia/Taipei', { cache: 'no-store', signal: c2.signal });
-      } finally { clearTimeout(t2); }
-      if (!res2.ok) throw new Error('time api 2');
-      const j2 = await res2.json();
-      const netStr = `${j2.date}T${j2.time}+08:00`;
-      const netUtc2 = Date.parse(netStr);
-      if (!isNaN(netUtc2)) { appState.timeOffsetMs = netUtc2 - Date.now(); ok = true; }
-    }
+      res2 = await fetch('https://timeapi.io/api/Time/current/zone?timeZone=Asia/Taipei', { cache: 'no-store', signal: c2.signal });
+    } finally { clearTimeout(t2); }
+    if (!res2.ok) throw new Error('time api');
+    const j2 = await res2.json();
+    const netStr = `${j2.date}T${j2.time}+08:00`;
+    const netUtc2 = Date.parse(netStr);
+    if (!isNaN(netUtc2)) { appState.timeOffsetMs = netUtc2 - Date.now(); ok = true; }
   } catch {}
   appState.networkTimeOk = !!ok;
   if (!ok) { appState.timeOffsetMs = 0; }
@@ -406,6 +402,7 @@ if (togglePasswordBtn) {
   currentUserRole: null,
   currentUserEmail: null,
   leaderCompanyFilter: null,
+  badgesPrev: {},
 };
 
 function id() {
@@ -870,18 +867,9 @@ function getDeviceModelCache(id) {
 
 async function initDeviceProfile() {
   try {
-    await ensureFirebase();
-    if (!db || !fns.setDoc || !fns.doc) return;
     const id = getDeviceId();
     if (!id) return;
-    const payload = {
-      model: getLocalDeviceModel(),
-      ua: navigator.userAgent || "",
-      platform: (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "",
-      updatedAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date(networkNowMs()).toISOString(),
-    };
-    await withRetry(() => fns.setDoc(fns.doc(db, "devices", id), payload, { merge: true }));
-    setDeviceModelCache(id, payload.model);
+    setDeviceModelCache(id, getLocalDeviceModel());
   } catch {}
 }
 
@@ -4003,6 +3991,7 @@ function applyPagePermissionsForUser(user) {
       sel.addEventListener('change', () => {
         appState.leaderCompanyFilter = sel.value || null;
         setActiveSubTab(activeSubTab);
+        try { refreshSubtabBadges(); } catch {}
       });
       subTabsEl.appendChild(sel);
     }
@@ -4018,6 +4007,7 @@ function applyPagePermissionsForUser(user) {
       if (idx === 0) activeSubTab = label;
     });
     setActiveSubTab(activeSubTab);
+    try { refreshSubtabBadges(); } catch {}
   }
 
   function setActiveSubTab(label) {
@@ -4046,6 +4036,7 @@ function applyPagePermissionsForUser(user) {
       }
       renderSettingsContent(label);
     }
+    try { refreshSubtabBadges(); } catch {}
   }
 
   // 人事分頁內容渲染（子分頁）
@@ -5252,6 +5243,113 @@ const SUB_TABS = {
   settings: ["一般", "帳號", "社區", "角色", "規則", "系統"],
 };
 
+function ensureNotificationPermission() {
+  try {
+    if (!('Notification' in window)) return Promise.resolve(false);
+    if (Notification.permission === 'granted') return Promise.resolve(true);
+    return Notification.requestPermission().then((p) => p === 'granted').catch(() => false);
+  } catch { return Promise.resolve(false); }
+}
+
+async function refreshSubtabBadges() {
+  const btns = Array.from(subTabsEl.querySelectorAll('.subtab-btn'));
+  if (!btns.length) return;
+  let leavePending = 0;
+  let appealPending = 0;
+  let leaveTw = 0, leaveTy = 0;
+  let appealTw = 0, appealTy = 0;
+  try {
+    await ensureNetworkTime();
+    await ensureFirebase();
+    const u = auth?.currentUser || null;
+    const role = String(appState.currentUserRole || '');
+    const isAdmin = role === '系統管理員';
+    const isManager = /主管|管理/.test(role);
+    const canAll = isAdmin || isManager;
+    if (db && fns.getDocs && fns.collection) {
+      const companies = Array.isArray(appState.companies) ? appState.companies : [];
+      const accounts = Array.isArray(appState.accounts) ? appState.accounts : [];
+      const twCo = companies.find((c) => /台北/.test(String(c.name||''))) || null;
+      const tyCo = companies.find((c) => /桃園/.test(String(c.name||''))) || null;
+      const uidsByCo = (co) => {
+        const ids0 = accounts.filter((a) => {
+          const ids = Array.isArray(a.companyIds) ? a.companyIds : (a.companyId ? [a.companyId] : []);
+          const idsS = ids.map((x) => String(x||'').trim());
+          return co ? (idsS.includes(String(co.id)) || idsS.includes(String(co.name||''))) : false;
+        }).map((a) => String(a.uid || a.id || '')).filter(Boolean);
+        return new Set(ids0);
+      };
+      const twUids = uidsByCo(twCo);
+      const tyUids = uidsByCo(tyCo);
+
+      const qLeave = canAll
+        ? fns.query(fns.collection(db, 'leaveRequests'), fns.where('status', '==', '送審'))
+        : (u ? fns.query(fns.collection(db, 'leaveRequests'), fns.where('uid', '==', u.uid), fns.where('status', '==', '送審')) : null);
+      if (qLeave) {
+        const snap = await withRetry(() => fns.getDocs(qLeave));
+        leavePending = snap.size || 0;
+        if (twUids.size || tyUids.size) {
+          snap.forEach((doc) => { const d = doc.data() || {}; const uid = String(d.uid||''); if (twUids.has(uid)) leaveTw += 1; else if (tyUids.has(uid)) leaveTy += 1; });
+        }
+      }
+      const qAppeal = canAll
+        ? fns.query(fns.collection(db, 'pointAppeals'), fns.where('state', '==', '送審'))
+        : (u ? fns.query(fns.collection(db, 'pointAppeals'), fns.where('uid', '==', u.uid), fns.where('state', '==', '送審')) : null);
+      if (qAppeal) {
+        const snap2 = await withRetry(() => fns.getDocs(qAppeal));
+        appealPending = snap2.size || 0;
+        if (twUids.size || tyUids.size) {
+          snap2.forEach((doc) => { const d = doc.data() || {}; const uid = String(d.uid||''); if (twUids.has(uid)) appealTw += 1; else if (tyUids.has(uid)) appealTy += 1; });
+        }
+      }
+    }
+  } catch {}
+  const toNotify = [];
+  for (const b of btns) {
+    const label = b.dataset.subtab || '';
+    const selectedCoId = appState.leaderCompanyFilter || '';
+    const companies = Array.isArray(appState.companies) ? appState.companies : [];
+    const selCo = companies.find((c) => String(c.id||'') === String(selectedCoId));
+    const isLeader = (activeMainTab === 'leader');
+    let num = 0;
+    if (label === '請假') {
+      if (isLeader && selCo) {
+        const isTw = /台北/.test(String(selCo.name||''));
+        const isTy = /桃園/.test(String(selCo.name||''));
+        num = isTw ? leaveTw : (isTy ? leaveTy : leavePending);
+      } else {
+        num = leavePending;
+      }
+    } else if (label === '計點') {
+      if (isLeader && selCo) {
+        const isTw = /台北/.test(String(selCo.name||''));
+        const isTy = /桃園/.test(String(selCo.name||''));
+        num = isTw ? appealTw : (isTy ? appealTy : appealPending);
+      } else {
+        num = appealPending;
+      }
+    }
+    const count = Number(num) || 0;
+    const prevKey = label + ':' + (isLeader && selCo ? String(selCo.id||'') : 'all');
+    const prevCounts = appState.badgesPrev || (appState.badgesPrev = {});
+    let badge = b.querySelector('.subtab-badge');
+    if (!count) { if (badge) badge.remove(); prevCounts[prevKey] = 0; continue; }
+    if (!badge) { badge = document.createElement('span'); badge.className = 'subtab-badge'; b.appendChild(badge); }
+    badge.textContent = String(num);
+    const prev = Number(prevCounts[prevKey] || 0);
+    if (count > 0 && count !== prev) { toNotify.push({ label, count }); }
+    prevCounts[prevKey] = count;
+  }
+  if (toNotify.length) {
+    try {
+      const granted = await ensureNotificationPermission();
+      if (granted) {
+        toNotify.forEach((n) => { try { new Notification('待審核提醒', { body: `${n.label} ${n.count}`, icon: 'favicon.svg' }); } catch {} });
+      }
+    } catch {}
+  }
+}
+
 let activeSubTab = null;
 // ===== 首頁狀態切換（F–K） =====
 function setHomeStatus(key, label) {
@@ -5656,19 +5754,7 @@ async function startCheckinFlow(statusKey = "work", statusLabel = "上班") {
 try {
   await ensureFirebase();
   // 先更新/建立裝置型號對照
-  try {
-    if (db && fns.setDoc && fns.doc) {
-      const did = getDeviceId();
-      if (did) {
-        await withRetry(() => fns.setDoc(fns.doc(db, 'devices', did), {
-          model: getLocalDeviceModel(),
-          ua: navigator.userAgent || '',
-          platform: (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '',
-          updatedAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date(networkNowMs()).toISOString(),
-        }, { merge: true }));
-      }
-    }
-  } catch {}
+  try { setDeviceModelCache(getDeviceId(), getLocalDeviceModel()); } catch {}
   const user = auth?.currentUser || null;
   const role = appState.currentUserRole || "一般";
       const payload = {

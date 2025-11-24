@@ -92,7 +92,7 @@ body {
 
 /* 子分頁（頁中上） */
 .subheader-tabs { display: flex; align-items: center; gap: 8px; overflow-x: auto; }
-.subtab-btn { background: transparent; border: none; color: #374151; font-size: 14px; padding: 6px 10px; border-radius: 999px; }
+.subtab-btn { background: transparent; border: none; color: #374151; font-size: 14px; padding: 6px 10px; border-radius: 999px; position: relative; }
 .subtab-btn.active { color: #FF0000; }
 /* 子分頁游標與 hover/active/pressed 效果 */
 button, .tab-btn, .subtab-btn { cursor: pointer; }
@@ -508,3 +508,4 @@ body.status-leave-request { --hero-pulse-rgb: 245,124,0; }
 .app-header .home-map-overlay { position: absolute; inset: 0; z-index: 1; opacity: 0.40; pointer-events: none; }
 .app-header .home-map-overlay img { width: 100%; height: 100%; object-fit: cover; }
 #modalRoot .form-row .label { display: block; width: 100%; background: #EEEEEE; font-weight: 700; text-align: center; padding: 8px; }
+.subtab-badge { position: absolute; top: -3px; right: -3px; min-width: 16px; height: 16px; padding: 0 5px; background: #CC0000; color: #ffffff; border-radius: 999px; font-size: 10px; line-height: 16px; text-align: center; box-shadow: 0 2px 6px rgba(0,0,0,0.15); }
