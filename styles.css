@@ -128,6 +128,11 @@ button[disabled] { cursor: not-allowed; }
 }
 .block-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .block-header.centered { justify-content: center; }
+.block#block-month-summary .block-header.centered { position: relative; }
+.block#block-month-summary #pointsPrevMonth { position: absolute; left: 8px; top: 50%; transform: translateY(-50%); }
+.block#block-month-summary #pointsNextMonth { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); }
+.block#block-month-summary #pointsPrevMonth,
+.block#block-month-summary #pointsNextMonth { background: #ffffff; color: #111827; border: none; }
 .block-title { font-weight: 600; font-size: 15px; }
 .block-actions { display: flex; gap: 8px; }
 

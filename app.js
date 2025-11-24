@@ -110,9 +110,24 @@ function updateHomeMap() {
 }
 
 function two(n) { return n < 10 ? "0" + n : "" + n; }
+async function initNetworkTime() {
+  try {
+    const res = await fetch('https://worldtimeapi.org/api/timezone/Asia/Taipei', { cache: 'no-store' });
+    if (!res.ok) throw new Error('time api');
+    const j = await res.json();
+    const netUtc = Date.parse(j.utc_datetime);
+    appState.timeOffsetMs = netUtc - Date.now();
+    appState.networkTimeOk = true;
+  } catch (_) {
+    appState.timeOffsetMs = 0;
+    appState.networkTimeOk = false;
+  }
+}
+async function ensureNetworkTime() { if (appState.networkTimeOk) return true; await initNetworkTime(); return !!appState.networkTimeOk; }
+function networkNowMs() { return Date.now() + (appState.timeOffsetMs || 0); }
 function nowInTZ(tz) {
-  // 取得指定時區的本地時間對應的 Date 物件
-  const str = new Date().toLocaleString('en-US', { timeZone: tz });
+  const base = new Date(networkNowMs());
+  const str = base.toLocaleString('en-US', { timeZone: tz });
   return new Date(str);
 }
 function formatDateYYYYMMDD(d) {
@@ -1939,6 +1954,8 @@ function renderSettingsContent(label) {
     renderSettingsCommunities();
   } else if (label === "帳號") {
     renderSettingsAccounts();
+  } else if (label === "角色") {
+    renderSettingsRoles();
   } else if (label === "規則") {
     renderSettingsRules();
   } else {
@@ -2225,8 +2242,8 @@ function renderSettingsGeneral() {
             appState.companies = appState.companies.filter((c) => c.id !== cid);
             renderSettingsContent("一般");
           }
-        })();
-      }
+  })();
+}
     });
   });
 
@@ -3774,35 +3791,42 @@ let ensureFirebasePromise = null;
 function applyPagePermissionsForUser(user) {
   try {
     const role = appState.currentUserRole || "一般";
-    let allowed = ["home"]; // 基本首頁永遠顯示
-    switch (role) {
-      case "系統管理員":
-        allowed = ["home","checkin","leader","manage","feature","personnel","settings"];
-        break;
-      case "管理層":
-        allowed = ["home","checkin","leader","manage","feature","personnel"];
-        break;
-      case "高階主管":
-        allowed = ["home","checkin","manage","feature"];
-        break;
-      case "初階主管":
-        allowed = ["home","checkin","manage","feature"];
-        break;
-      case "行政":
-        allowed = ["home","checkin","feature"];
-        break;
-      case "保全":
-        allowed = ["home","checkin","feature"];
-        break;
-      case "總幹事":
-      case "秘書":
-      case "清潔":
-      case "機電":
-        allowed = ["home","checkin","feature"];
-        break;
-      default:
-        allowed = ["home","checkin","feature"];
-        break;
+    const allTabs = ["home","checkin","leader","manage","feature","personnel","settings"];
+    let allowed = ["home"];
+    const cfg = Array.isArray(appState.rolesConfig) ? appState.rolesConfig.find((r) => String(r.name||"") === String(role)) : null;
+    if (cfg && Array.isArray(cfg.allowedTabs) && cfg.allowedTabs.length) {
+      allowed = cfg.allowedTabs.filter((t) => allTabs.includes(t));
+      if (!allowed.includes("home")) allowed.unshift("home");
+    } else {
+      switch (role) {
+        case "系統管理員":
+          allowed = ["home","checkin","leader","manage","feature","personnel","settings"];
+          break;
+        case "管理層":
+          allowed = ["home","checkin","leader","manage","feature","personnel"];
+          break;
+        case "高階主管":
+          allowed = ["home","checkin","manage","feature"];
+          break;
+        case "初階主管":
+          allowed = ["home","checkin","manage","feature"];
+          break;
+        case "行政":
+          allowed = ["home","checkin","feature"];
+          break;
+        case "保全":
+          allowed = ["home","checkin","feature"];
+          break;
+        case "總幹事":
+        case "秘書":
+        case "清潔":
+        case "機電":
+          allowed = ["home","checkin","feature"];
+          break;
+        default:
+          allowed = ["home","checkin","feature"];
+          break;
+      }
     }
     tabButtons.forEach((b) => {
       const t = b.dataset.tab || "";
@@ -4490,7 +4514,7 @@ function applyPagePermissionsForUser(user) {
         role,
         lat: lat ?? null,
         lng: lng ?? null,
-        createdAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date().toISOString(),
+        createdAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date(networkNowMs()).toISOString(),
       }));
       if (checkinResult) checkinResult.textContent = `打卡成功：${docRef.id}`;
     } catch (err) {
@@ -4545,6 +4569,8 @@ emailSignInBtn?.addEventListener("click", async () => {
     await ensureFirebase();
   }
 })();
+// 網路時間初始化
+(async () => { try { await initNetworkTime(); } catch {} })();
 // 子分頁定義（頁中上）
 const SUB_TABS = {
   home: [],
@@ -4553,7 +4579,7 @@ const SUB_TABS = {
   personnel: ["班表"],
   manage: ["總覽", "地圖", "記錄", "請假", "計點"],
   feature: ["公告", "文件", "工具"],
-  settings: ["一般", "帳號", "社區", "規則", "系統"],
+  settings: ["一般", "帳號", "社區", "角色", "規則", "系統"],
 };
 
 let activeSubTab = null;
@@ -4601,6 +4627,8 @@ btnStart?.addEventListener("click", async () => {
 // ===== 上班打卡完整流程（位置 → 地圖 → 自拍 → 儲存） =====
 async function startCheckinFlow(statusKey = "work", statusLabel = "上班") {
   try {
+    const netOk = await ensureNetworkTime();
+    if (!netOk || navigator.onLine === false) { alert('無網路或無法取得網路時間，打卡失敗'); return; }
     const userRole = appState.currentUserRole || "保全";
     const adminRoles = new Set(["系統管理員", "管理層", "高階主管", "初階主管", "行政"]);
     const staffRoles = new Set(["總幹事", "秘書", "清潔", "機電", "保全"]);
@@ -4810,7 +4838,7 @@ async function startCheckinFlow(statusKey = "work", statusLabel = "上班") {
               ctx.fillStyle = '#ffffff';
               ctx.font = `${Math.max(16, Math.floor(canvas.height*0.03))}px sans-serif`;
               ctx.textBaseline = 'top';
-              const now = new Date();
+              const now = nowInTZ('Asia/Taipei');
               const dateStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
               const nameElText = (homeHeaderNameEl?.textContent || '').replace(/^歡迎~\s*/, '');
               const line1 = `${dateStr} ${nameElText || '使用者'}`;
@@ -4918,7 +4946,7 @@ async function startCheckinFlow(statusKey = "work", statusLabel = "上班") {
                   ctx.fillStyle = '#ffffff';
                   ctx.textBaseline = 'middle';
                   let fontSize = Math.max(12, Math.floor(th * 0.025));
-                  const now = new Date();
+                  const now = nowInTZ('Asia/Taipei');
                   const dateStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
                   const nameElText = (homeHeaderNameEl?.textContent || '').replace(/^歡迎~\s*/, '') || '使用者';
                   const locStr = (typeof lat === 'number' && typeof lng === 'number') ? `${lat.toFixed(6)},${lng.toFixed(6)}` : '座標未知';
@@ -4996,16 +5024,13 @@ try {
         try { await withRetry(() => fns.addDoc(fns.collection(db, "checkins"), payload)); saved = true; } catch {}
       }
       if (!saved) {
-        try {
-          const p2 = { ...payload };
-          if (typeof p2.createdAt !== 'string') p2.createdAt = new Date().toISOString();
-          enqueuePendingCheckin(p2);
-        } catch {}
+        alert('打卡失敗：請確認網路連線或稍後重試');
+        return;
       }
       // 更新首頁 G 列摘要，並移除 F 列顯示
       const gRow = document.querySelector('.row-g');
       const fRow = document.querySelector('.row-f');
-      const now = new Date();
+      const now = nowInTZ('Asia/Taipei');
       const dateStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
       // 不清空 row-g，避免移除 #homeStatus 元素
       if (fRow) {
@@ -5703,7 +5728,7 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
           } catch {}
           const html = `
             <div class="block" id="block-month-summary">
-              <div class="block-header centered"><span class="block-title" id="pointsMonthTitle"></span></div>
+              <div class="block-header centered"><button id="pointsPrevMonth" class="btn btn-sm" type="button">◀</button><span class="block-title" id="pointsMonthTitle"></span><button id="pointsNextMonth" class="btn btn-sm" type="button">▶</button></div>
               <div class="month-total-label">本月計點</div>
               <div class="month-total-wrap"><div id="pointsMonthTotalValue" class="month-total">0</div></div>
             </div>
@@ -5736,6 +5761,8 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
           };
           const monthTitleEl = container.querySelector('#pointsMonthTitle');
           const monthTotalEl = container.querySelector('#pointsMonthTotalValue');
+          const prevBtn = container.querySelector('#pointsPrevMonth');
+          const nextBtn = container.querySelector('#pointsNextMonth');
           const dateInput = container.querySelector('#pointsDateFilter');
           const tzNow = nowInTZ('Asia/Taipei');
           let viewMonth = new Date(tzNow.getFullYear(), tzNow.getMonth(), 1);
@@ -5779,6 +5806,8 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
           if (dateInput) dateInput.value = ymd(tzNow);
           renderMonth();
           renderDaily();
+          prevBtn?.addEventListener('click', () => { viewMonth = new Date(viewMonth.getFullYear(), viewMonth.getMonth() - 1, 1); renderMonth(); });
+          nextBtn?.addEventListener('click', () => { viewMonth = new Date(viewMonth.getFullYear(), viewMonth.getMonth() + 1, 1); renderMonth(); });
           dateInput?.addEventListener('change', () => { renderDaily(); });
           const summaryBlock = container.querySelector('#block-month-summary');
           let sx = 0;
@@ -6083,6 +6112,184 @@ function renderSettingsRules() {
       } catch (e) {
         alert(`刪除失敗：${e?.message || e}`);
       }
+    }
+  });
+}
+
+async function loadRolesFromFirestore() {
+  try {
+    await ensureFirebase();
+    const list = [];
+    if (db && fns.collection && fns.getDocs) {
+      const ref = fns.collection(db, 'roles');
+      const snap = await withRetry(() => fns.getDocs(ref));
+      snap.forEach((doc) => { const d = doc.data() || {}; list.push({ id: doc.id, name: String(d.name||''), allowedTabs: Array.isArray(d.allowedTabs) ? d.allowedTabs : [] }); });
+    }
+    const defMap = (r) => {
+      switch (r) {
+        case '系統管理員': return ["home","checkin","leader","manage","feature","personnel","settings"]; 
+        case '管理層': return ["home","checkin","leader","manage","feature","personnel"]; 
+        case '高階主管': return ["home","checkin","manage","feature"]; 
+        case '初階主管': return ["home","checkin","manage","feature"]; 
+        case '行政': return ["home","checkin","feature"]; 
+        case '保全': return ["home","checkin","feature"]; 
+        case '總幹事':
+        case '秘書':
+        case '清潔':
+        case '機電': return ["home","checkin","feature"]; 
+        default: return ["home","checkin","feature"]; 
+      }
+    };
+    appState.rolesConfig = list.length ? list : [];
+    const fromDefaults = getRoles();
+    const fromAccounts = Array.isArray(appState.accounts) ? appState.accounts.map((a) => a.role).filter(Boolean) : [];
+    const union = Array.from(new Set([...(fromDefaults||[]), ...(fromAccounts||[])]));
+    const exists = new Set((appState.rolesConfig || []).map((r) => r.name));
+    union.forEach((name) => {
+      if (!exists.has(name)) {
+        (appState.rolesConfig || (appState.rolesConfig = [])).push({ id: null, name, allowedTabs: defMap(name) });
+      }
+    });
+    if (typeof window !== 'undefined') window.Roles = (appState.rolesConfig || []).map((r) => r.name);
+  } catch {
+    const defMap = (r) => {
+      switch (r) {
+        case '系統管理員': return ["home","checkin","leader","manage","feature","personnel","settings"]; 
+        case '管理層': return ["home","checkin","leader","manage","feature","personnel"]; 
+        case '高階主管': return ["home","checkin","manage","feature"]; 
+        case '初階主管': return ["home","checkin","manage","feature"]; 
+        case '行政': return ["home","checkin","feature"]; 
+        case '保全': return ["home","checkin","feature"]; 
+        case '總幹事':
+        case '秘書':
+        case '清潔':
+        case '機電': return ["home","checkin","feature"]; 
+        default: return ["home","checkin","feature"]; 
+      }
+    };
+    const fromDefaults = getRoles();
+    const fromAccounts = Array.isArray(appState.accounts) ? appState.accounts.map((a) => a.role).filter(Boolean) : [];
+    const union = Array.from(new Set([...(fromDefaults||[]), ...(fromAccounts||[])]));
+    appState.rolesConfig = union.map((name) => ({ id: null, name, allowedTabs: defMap(name) }));
+    if (typeof window !== 'undefined') window.Roles = (appState.rolesConfig || []).map((r) => r.name);
+  }
+}
+
+function renderSettingsRoles() {
+  const container = settingsContent;
+  const allTabs = ["home","checkin","leader","manage","feature","personnel","settings"];
+  const labelMap = (() => {
+    const map = {};
+    Array.from(document.querySelectorAll('.tab-btn')).forEach((b) => {
+      const k = b?.dataset?.tab || '';
+      const lab = b.querySelector('.tab-label')?.textContent || b.getAttribute('aria-label') || k;
+      if (k) map[k] = lab;
+    });
+    return map;
+  })();
+  const toLabel = (k) => labelMap[k] || k;
+  container.innerHTML = `
+    <div class="block" id="block-roles">
+      <div class="block-header"><span class="block-title">角色列表</span><div class="block-actions"><button id="btnAddRole" class="btn">新增</button></div></div>
+      <div class="table-wrapper">
+        <table class="table" aria-label="角色列表">
+          <thead>
+            <tr><th>角色名稱</th><th>顯示分頁</th><th>操作</th></tr>
+          </thead>
+          <tbody id="rolesTbody"></tbody>
+        </table>
+      </div>
+    </div>`;
+  const tbody = container.querySelector('#rolesTbody');
+  const addBtn = container.querySelector('#btnAddRole');
+  const role = appState.currentUserRole || '一般';
+  const isAdmin = role === '系統管理員';
+  if (!isAdmin) { try { addBtn?.parentElement?.removeChild(addBtn); } catch {} }
+  (async () => {
+    await loadRolesFromFirestore();
+    const rows = (appState.rolesConfig || []).map((r) => {
+      const tabs = Array.isArray(r.allowedTabs) ? r.allowedTabs.map((t) => toLabel(t)).join('、') : '';
+      return `<tr data-id="${r.id || ''}"><td>${r.name}</td><td>${tabs}</td><td class="cell-actions"><button class="btn" data-act="edit">編輯</button>${isAdmin ? '<button class="btn" data-act="del">刪除</button>' : ''}</td></tr>`;
+    }).join('');
+    if (tbody) tbody.innerHTML = rows;
+  })();
+  addBtn && attachPressInteractions(addBtn);
+  addBtn?.addEventListener('click', () => {
+    if (!isAdmin) { alert('權限不足：僅系統管理員可新增角色'); return; }
+    openModal({
+      title: '新增角色',
+      fields: [
+        { key: 'name', label: '角色名稱', type: 'text' },
+        { key: 'allowedTabs', label: '顯示分頁', type: 'multiselect', options: allTabs.map((t) => ({ value: t, label: toLabel(t) })) },
+      ],
+      onSubmit: async (d) => {
+        try {
+          await ensureFirebase();
+          const payload = { name: String(d.name||''), allowedTabs: Array.isArray(d.allowedTabs) ? d.allowedTabs : [] };
+          let docId = null;
+          if (db && fns.addDoc && fns.collection) {
+            const ref = await withRetry(() => fns.addDoc(fns.collection(db, 'roles'), payload));
+            docId = ref.id;
+          }
+          if (!docId) throw new Error('新增失敗');
+          appState.rolesConfig.push({ id: docId, ...payload });
+          if (typeof window !== 'undefined') window.Roles = (appState.rolesConfig || []).map((x) => x.name);
+          renderSettingsRoles();
+          return true;
+        } catch (e) { alert(`新增失敗：${e?.message || e}`); return false; }
+      }
+    });
+  });
+  const table = container.querySelector('#block-roles table');
+  table?.addEventListener('click', async (e) => {
+    const t = e.target; if (!(t instanceof HTMLElement)) return;
+    const act = t.dataset.act || ''; if (!act) return;
+    const tr = t.closest('tr'); const idv = tr?.getAttribute('data-id') || '';
+    const idx = (appState.rolesConfig || []).findIndex((x) => (x.id || '') === idv);
+    const r = idx >= 0 ? appState.rolesConfig[idx] : null;
+    if (act === 'edit') {
+      openModal({
+        title: '編輯角色',
+        fields: [
+          { key: 'name', label: '角色名稱', type: 'text' },
+          { key: 'allowedTabs', label: '顯示分頁', type: 'multiselect', options: allTabs.map((t) => ({ value: t, label: toLabel(t) })) },
+        ],
+        initial: { name: r?.name || '', allowedTabs: r?.allowedTabs || [] },
+        submitText: '儲存',
+        onSubmit: async (d) => {
+          try {
+            await ensureFirebase();
+            const payload = { name: String(d.name||''), allowedTabs: Array.isArray(d.allowedTabs) ? d.allowedTabs : [] };
+            if (r?.id && db && fns.updateDoc && fns.doc) {
+              await withRetry(() => fns.updateDoc(fns.doc(db, 'roles', r.id), payload));
+              appState.rolesConfig[idx] = { ...(r || {}), ...payload };
+            } else {
+              // 自動帶入（id 為 null）的角色，於編輯儲存時建立文件
+              let docId = null;
+              if (db && fns.addDoc && fns.collection) {
+                const ref = await withRetry(() => fns.addDoc(fns.collection(db, 'roles'), payload));
+                docId = ref.id;
+              }
+              if (!docId) throw new Error('建立角色失敗');
+              appState.rolesConfig[idx] = { id: docId, ...payload };
+            }
+            if (typeof window !== 'undefined') window.Roles = (appState.rolesConfig || []).map((x) => x.name);
+            renderSettingsRoles();
+            return true;
+          } catch (e) { alert(`更新失敗：${e?.message || e}`); return false; }
+        }
+      });
+    } else if (act === 'del') {
+      if (!isAdmin) { alert('權限不足：僅系統管理員可刪除角色'); return; }
+      const ok = await confirmAction({ title: '確認刪除', text: '確定要刪除這個角色嗎？', confirmText: '刪除' });
+      if (!ok) return;
+      try {
+        await ensureFirebase();
+        if (r?.id && db && fns.deleteDoc && fns.doc) { await withRetry(() => fns.deleteDoc(fns.doc(db, 'roles', r.id))); }
+        appState.rolesConfig.splice(idx, 1);
+        if (typeof window !== 'undefined') window.Roles = (appState.rolesConfig || []).map((x) => x.name);
+        tr?.parentElement?.removeChild(tr);
+      } catch (e) { alert(`刪除失敗：${e?.message || e}`); }
     }
   });
 }
