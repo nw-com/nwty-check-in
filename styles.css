@@ -91,8 +91,8 @@ body {
 .subheader-text { font-size: 14px; color: #111827; }
 
 /* 子分頁（頁中上） */
-.subheader-tabs { display: flex; align-items: center; gap: 8px; overflow-x: auto; width: 100%; }
-.subtab-btn { background: transparent; border: none; color: #374151; font-size: 14px; padding: 6px 10px; border-radius: 999px; position: relative; }
+.subheader-tabs { display: grid; grid-auto-flow: column; grid-auto-columns: max-content; align-items: center; gap: 8px; overflow-x: auto; overflow-y: visible; width: 100%; -webkit-overflow-scrolling: touch; }
+.subtab-btn { background: transparent; border: none; color: #374151; font-size: 14px; padding: 0 12px; border-radius: 999px; position: relative; height: 36px; display: inline-flex; align-items: center; }
 .subtab-btn.active { color: #FF0000; }
 /* 子分頁游標與 hover/active/pressed 效果 */
 button, .tab-btn, .subtab-btn { cursor: pointer; }
@@ -311,6 +311,10 @@ button[disabled] { cursor: not-allowed; }
 .status-label.return { color: #0b8043; }
 .status-label.bad { color: #CC0000; }
 .status-label.leave-request { color: #f57c00; }
+.status-label.holiday { color: #0000ff; }
+.status-label.missing { color: #ff0000; }
+.status-holiday { color: #0000ff; }
+.status-missing { color: #ff0000; }
 /* 預設狀態標籤樣式：保持顏色由各狀態類別決定 */
 .status-label { color: inherit; font-weight: 300; font-size: inherit; }
 
@@ -460,7 +464,10 @@ body.status-leave-request { --hero-pulse-rgb: 245,124,0; }
 /* 班表月曆樣式 */
 .roster-calendar { display: block; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 0; padding: 8px; box-shadow: none; }
 /* 導覽置於 thead 上方（見 JS 結構），按鈕深色、標題三行 */
-.roster-cal-header { display: flex; flex-direction: row; align-items: center; justify-content: center; gap: 12px; margin-bottom: 8px; }
+.roster-cal-header { display: flex; flex-direction: row; align-items: center; justify-content: center; gap: 12px; margin-bottom: 8px; position: relative; }
+#rosterPrevMonth, #rosterNextMonth { background: #ffffff; color: #111827; border: none; }
+#rosterPrevMonth { position: absolute; left: 8px; top: 50%; transform: translateY(-50%); }
+#rosterNextMonth { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); }
 .roster-cal-nav { display: flex; align-items: center; justify-content: center; gap: 12px; }
 .roster-cal-nav-btn { width: 36px; height: 36px; border: none; border-radius: 8px; background: #111827; color: #ffffff; font-size: 18px; line-height: 1; cursor: pointer; box-shadow: 0 2px 6px rgba(0,0,0,0.15); }
 .roster-cal-nav-btn:hover { background: #0f172a; }
@@ -527,10 +534,31 @@ body.status-leave-request { --hero-pulse-rgb: 245,124,0; }
 /* 面板內按鈕統一直角 */
 .panel .btn { border-radius: 0; }
 .btn { border-radius: 0; }
-#modalRoot .input { border: none; text-align: center; }
+#modalRoot .input { border: 1px solid #e5e7eb; text-align: center; }
 #modalRoot select.input { -webkit-appearance: none; -moz-appearance: none; appearance: none; background: transparent; pointer-events: auto; }
 #modalRoot select.input[data-key='role'] { pointer-events: none; }
+/* Modal select dropdown icon */
+#modalRoot select.input {
+  background-color: #ffffff;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 14px 14px;
+  padding-right: 32px;
+}
+/* Modal input edit icon */
+#modalRoot input.input:not([type='file']) {
+  background-color: #ffffff;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 20h9'/><path d='M16.5 3.5l4 4-11 11H5.5v-4z'/></svg>");
+  background-repeat: no-repeat;
+  background-position: left 10px center;
+  background-size: 14px 14px;
+  padding-left: 32px;
+}
 .app-header .home-map-overlay { position: absolute; inset: 0; z-index: 1; opacity: 0.40; pointer-events: none; }
 .app-header .home-map-overlay img { width: 100%; height: 100%; object-fit: cover; }
 #modalRoot .form-row .label { display: block; width: 100%; background: #EEEEEE; font-weight: 700; text-align: center; padding: 8px; }
-.subtab-badge { position: absolute; top: -3px; right: -3px; min-width: 16px; height: 16px; padding: 0 5px; background: #CC0000; color: #ffffff; border-radius: 999px; font-size: 10px; line-height: 16px; text-align: center; box-shadow: 0 2px 6px rgba(0,0,0,0.15); }
+.subtab-badge { position: absolute; top: 2px; right: 2px; min-width: 18px; height: 18px; padding: 0 6px; background: #CC0000; color: #ffffff; border-radius: 999px; font-size: 11px; line-height: 18px; text-align: center; box-shadow: 0 2px 6px rgba(0,0,0,0.15); }
+
+/* 子分頁選擇器列高一致 */
+.subtab-select { height: 36px; min-height: 36px; font-size: 14px; padding: 0 10px; border: 1px solid #e5e7eb; border-radius: 8px; background: #ffffff; }

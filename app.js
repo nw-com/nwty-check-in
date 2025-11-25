@@ -120,22 +120,8 @@ function updateHomeMap() {
 
 function two(n) { return n < 10 ? "0" + n : "" + n; }
 async function initNetworkTime() {
-  if (navigator.onLine === false) { appState.networkTimeOk = false; appState.timeOffsetMs = 0; return; }
-  let ok = false;
-  try {
-    const res = await Promise.race([
-      fetch('https://timeapi.io/api/Time/current/zone?timeZone=Asia/Taipei', { cache: 'no-store' }),
-      new Promise((resolve) => setTimeout(() => resolve(null), 5000)),
-    ]);
-    if (res && res.ok) {
-      const j = await res.json();
-      const netStr = `${j.date}T${j.time}+08:00`;
-      const netUtc = Date.parse(netStr);
-      if (!isNaN(netUtc)) { appState.timeOffsetMs = netUtc - Date.now(); ok = true; }
-    }
-  } catch {}
-  appState.networkTimeOk = !!ok;
-  if (!ok) { appState.timeOffsetMs = 0; }
+  appState.timeOffsetMs = 0;
+  appState.networkTimeOk = true;
 }
 async function ensureNetworkTime() {
   if (appState.networkTimeOk === true) return true;
@@ -1524,7 +1510,7 @@ function companyStats(companyId) {
     const ids = Array.isArray(a.companyIds) ? a.companyIds : (a.companyId ? [a.companyId] : []);
     return ids.includes(companyId);
   });
-  const leaderRoles = new Set(["高階主管", "初階主管"]);
+  const leaderRoles = new Set(["高階主管", "初階主管", "行政"]);
   const staffRoles = new Set(["總幹事", "秘書", "清潔", "機電", "保全"]);
   const leaderCount = accountsInCompany.filter((a) => leaderRoles.has(a.role)).length;
   const staffCount = accountsInCompany.filter((a) => staffRoles.has(a.role)).length;
@@ -2715,7 +2701,7 @@ function renderSettingsAccounts() {
     const service = Array.isArray(a.serviceCommunities) ? a.serviceCommunities.map((id) => appState.communities.find((x) => x.id === id)?.name || id).join("、") : "";
     const lic = Array.isArray(a.licenses) ? a.licenses.map((x) => appState.licenses.find((l) => l.id === x)?.name || x).join("、") : "";
     return `<tr data-id="${a.id}">
-      <td>${a.photoUrl ? `<img src="${a.photoUrl}" alt="頭像" style="width:36px;height:36px;border-radius:50%;object-fit:cover;"/>` : ""}</td>
+      <td>${a.photoUrl ? `<img src="${a.photoUrl}" alt="頭像" class="user-photo"/>` : ""}</td>
       <td>${a.name || ""}</td>
       <td>${a.title || ""}</td>
       <td>${a.email || ""}</td>
@@ -2738,7 +2724,7 @@ function renderSettingsAccounts() {
 
   const pendingRows = appState.pendingAccounts.map((p) => {
     return `<tr data-id="${p.id}">
-      <td>${p.photoUrl ? `<img src="${p.photoUrl}" alt="頭像" style="width:36px;height:36px;border-radius:50%;object-fit:cover;"/>` : ""}</td>
+      <td>${p.photoUrl ? `<img src="${p.photoUrl}" alt="頭像" class="user-photo"/>` : ""}</td>
       <td>${p.name || ""}</td>
       <td>${p.title || ""}</td>
       <td>${p.email || ""}</td>
@@ -3712,6 +3698,7 @@ let ensureFirebasePromise = null;
       onSubmit: async (data) => {
         try {
           await ensureFirebase();
+          try { loadRosterPlansFromStorage(); } catch {}
           const user = auth?.currentUser || null;
           const selected = placeOptions.find((o) => String(o.value) === String(data.place || '')) || null;
           const payload = {
@@ -4259,21 +4246,51 @@ function hasFullAccessToTab(tab) {
       function ymd(date) { return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`; }
       appState.rosterPlans = appState.rosterPlans || {};
       const rosterPlans = appState.rosterPlans; // officerId -> { ymd -> { startTime, endTime, status } }
+      function getRosterBucketByIds(ids) {
+        const rp = appState.rosterPlans || {};
+        const norm = (s) => String(s||'').trim();
+        const keys = [ids.uid, ids.id, ids.raw, ids.name].map(norm).filter(Boolean);
+        for (const k of keys) { if (rp[k]) return rp[k]; }
+        try {
+          const rpKeys = Object.keys(rp);
+          for (const key of rpKeys) { if (keys.includes(norm(key))) return rp[key]; }
+        } catch {}
+        return {};
+      }
+      function getRosterPlan(bucket, y, m, d) {
+        try {
+          const b = bucket || {};
+          const allKeys = Object.keys(b).map((k)=>String(k||'').trim());
+          const dd = String(d).padStart(2,'0');
+          const mm = String(m+1).padStart(2,'0');
+          const yyyy = String(y);
+          const yy = yyyy.slice(-2);
+          const candidates = [
+            `${yyyy}-${mm}-${dd}`,
+            `${yy}-${mm}-${dd}`,
+            `${yyyy}-${m+1}-${d}`,
+            `${yy}-${m+1}-${d}`,
+          ];
+          for (const k of candidates) {
+            const i = allKeys.indexOf(k);
+            if (i >= 0) return b[allKeys[i]] || null;
+          }
+          return null;
+        } catch { return null; }
+      }
       function updateRoster(date) {
         if (rosterDateEl) rosterDateEl.textContent = `日期：${ymd(date)}`;
         if (!rosterListBody) return;
         rosterListBody.innerHTML = "";
         const officerId = sel?.value || "";
         const ids = resolveOfficerIds(officerId);
-        const key = ymd(date);
-        const bucket = rosterPlans[ids.uid] || rosterPlans[ids.id] || rosterPlans[ids.raw] || rosterPlans[ids.name] || {};
-        const plan = bucket[key] || null;
+        const bucket = getRosterBucketByIds(ids);
+        const plan = getRosterPlan(bucket, date.getFullYear(), date.getMonth(), date.getDate());
         const wd = date.getDay();
         const holiday = isHoliday(date);
-        const defaultHoliday = isDefaultHoliday(date);
-        const startCell = plan ? (plan.status === "休假日" ? "" : (plan.startTime || "09:00")) : (defaultHoliday ? "" : "09:00");
-        const endCell = plan ? (plan.status === "休假日" ? "" : (plan.endTime || "17:30")) : (defaultHoliday ? "" : "17:30");
-        const status = plan ? plan.status : (defaultHoliday ? "休假日" : "上班日");
+        const startCell = plan ? (String(plan.status||"").includes("休假") ? "" : (plan.startTime || "09:00")) : "09:00";
+        const endCell = plan ? (String(plan.status||"").includes("休假") ? "" : (plan.endTime || "17:30")) : "17:30";
+        const status = plan ? plan.status : "上班日";
         const tr = document.createElement("tr");
         tr.innerHTML = `<td>${startCell}</td><td>${endCell}</td><td>${status}</td><td><button class="btn btn-xs roster-edit">編輯</button> <button class="btn btn-xs roster-del">刪除</button></td>`;
         // 編輯
@@ -4534,12 +4551,12 @@ function hasFullAccessToTab(tab) {
           }
           function getDayClasses(dayStr) {
             if (!dayStr) return { cellCls: "", btnCls: "" };
-            const k = `${y}-${String(m+1).padStart(2,'0')}-${String(dayStr).padStart(2,'0')}`;
             const ids = resolveOfficerIds(officerId);
-            const bucket = rosterPlans[ids.uid] || rosterPlans[ids.id] || rosterPlans[ids.raw] || rosterPlans[ids.name] || {};
-            const plan = bucket[k];
+            const bucket = getRosterBucketByIds(ids);
+            const plan = getRosterPlan(bucket, y, m, Number(dayStr));
+            const k = `${y}-${String(m+1).padStart(2,'0')}-${String(dayStr).padStart(2,'0')}`;
             const wd = new Date(y,m,Number(dayStr)).getDay();
-            let base = plan?.status || (wd === 5 || wd === 0 || wd === 6 ? '休假日' : '上班日');
+            let base = plan?.status || '上班日';
             const norm = (s) => {
               const v = String(s||'');
               if (v.includes('值班')) return '值班日';
@@ -4647,7 +4664,7 @@ function hasFullAccessToTab(tab) {
             container.innerHTML = `
               <div class="block" id="leader-block-records">
                 <div class="block-header"><span class="block-title">${coName || ''}打卡列表</span></div>
-                <div class="block-actions"><label for="leaderRecordDate">日期：</label> <input id="leaderRecordDate" type="date" /></div>
+                <div class="block-actions"><label for="leaderRecordDate"></label> <input id="leaderRecordDate" type="date" class="input" /></div>
                 <div class="table-wrapper"><div id="leaderRecordList">該公司無打卡紀錄</div></div>
               </div>
             `;
@@ -4689,18 +4706,22 @@ function hasFullAccessToTab(tab) {
           container.innerHTML = `
             <div class="block" id="leader-block-records">
               <div class="block-header"><span class="block-title">${coName || ''}打卡列表</span></div>
-              <div class="block-actions"><label for="leaderRecordDate">日期：</label> <input id="leaderRecordDate" type="date" /></div>
+              <div class="block-actions"><label for="leaderRecordDate"></label> <select id="leaderRecordNameFilter" class="input"></select> <input id="leaderRecordDate" type="date" class="input" /></div>
               <div class="table-wrapper"><div id="leaderRecordList"></div></div>
             </div>
           `;
           const dateInput = container.querySelector('#leaderRecordDate');
           const listRoot = container.querySelector('#leaderRecordList');
+          const nameFilter = container.querySelector('#leaderRecordNameFilter');
           if (!listRoot || !dateInput) return;
           dateInput.value = todayYmd;
+          const nameOptions = [{ value: '', label: '全部' }].concat(targets.map((a) => ({ value: String(a.uid || a.id || ''), label: a.name || a.email || '使用者' })));
+          if (nameFilter) { nameFilter.innerHTML = nameOptions.map((o) => `<option value="${o.value}">${o.label}</option>`).join(''); }
           function renderForDate(ymdStr) {
             const sel = String(ymdStr || '').trim();
             if (!sel) return;
-            const dayList = list.filter((r) => formatYmdTZ(r.dt, 'Asia/Taipei') === sel).sort((a, b) => b.dt - a.dt).slice(0, 100);
+            const selUid = String(nameFilter?.value || '').trim();
+            const dayList = list.filter((r) => formatYmdTZ(r.dt, 'Asia/Taipei') === sel && (!selUid || String(r.uid||'') === selUid)).sort((a, b) => b.dt - a.dt).slice(0, 100);
             listRoot.innerHTML = '';
             if (!dayList.length) { listRoot.textContent = '該日無打卡紀錄'; return; }
             dayList.forEach((r) => {
@@ -4747,13 +4768,186 @@ function hasFullAccessToTab(tab) {
               const dtStr = formatDateTimeTZ(r.dt, 'Asia/Taipei');
               const when = document.createElement('div');
               when.textContent = `時間：${dtStr}`;
+
+              const actions = document.createElement('div');
+              actions.className = 'record-actions';
+
+              const mapBtn = document.createElement('button');
+              mapBtn.className = 'btn btn-blue';
+              mapBtn.type = 'button';
+              mapBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="margin-right:6px;"><path d="M12 2c-3.866 0-7 3.134-7 7 0 5.25 7 13 7 13s7-7.75 7-13c0-3.866-3.134-7-7-7z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="9" r="2" stroke="currentColor" stroke-width="2"/></svg>地圖`;
+              mapBtn.style.borderRadius = '0'; mapBtn.style.padding = '4px 8px'; mapBtn.style.minHeight = '30px';
+              attachPressInteractions(mapBtn);
+              mapBtn.disabled = !(typeof r.lat === 'number' && typeof r.lng === 'number');
+              mapBtn.title = mapBtn.disabled ? '座標未知' : '';
+              mapBtn.addEventListener('click', () => {
+                if (mapBtn.disabled) return;
+                const lat = Number(r.lat).toFixed(6);
+                const lon = Number(r.lng).toFixed(6);
+                openModal({ title: '定位地圖', fields: [], submitText: '關閉', refreshOnSubmit: false, onSubmit: async () => true, afterRender: async ({ body }) => { try { const maps = await ensureGoogleMaps(); const box = document.createElement('div'); box.style.width = '100%'; box.style.height = '65vh'; box.style.borderRadius = '8px'; body.appendChild(box); const center = { lat: parseFloat(lat), lng: parseFloat(lon) }; const map = new maps.Map(box, { center, zoom: 18, gestureHandling: 'greedy' }); new maps.Marker({ position: center, map, draggable: false, title: '目前位置' }); const txt = document.createElement('div'); txt.textContent = `座標：${lat}, ${lon}`; txt.className = 'muted'; txt.style.marginTop = '8px'; body.appendChild(txt); } catch { const txt = document.createElement('div'); txt.textContent = `座標：${lat}, ${lon}`; txt.className = 'muted'; txt.style.marginTop = '8px'; body.appendChild(txt); } } });
+              });
+
+              const photoBtn = document.createElement('button');
+              photoBtn.className = 'btn btn-green';
+              photoBtn.type = 'button';
+              photoBtn.innerHTML = `<svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\" style=\"margin-right:6px;\"><rect x=\"4\" y=\"7\" width=\"16\" height=\"12\" rx=\"2\" stroke=\"currentColor\" stroke-width=\"2\" /><path d=\"M9 7l1.5-2h3L15 7\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" /><circle cx=\"12\" cy=\"13\" r=\"3.5\" stroke=\"currentColor\" stroke-width=\"2\" /></svg>照片`;
+              photoBtn.style.borderRadius = '0'; photoBtn.style.padding = '4px 8px'; photoBtn.style.minHeight = '30px';
+              attachPressInteractions(photoBtn);
+              photoBtn.disabled = !r.photoData;
+              photoBtn.title = photoBtn.disabled ? '無照片' : '';
+              photoBtn.addEventListener('click', () => {
+                if (photoBtn.disabled) return;
+                openModal({ title: '打卡照片', fields: [], submitText: '關閉', refreshOnSubmit: false, onSubmit: async () => true, afterRender: ({ body }) => { const img = document.createElement('img'); img.src = r.photoData; img.alt = '打卡照片'; img.style.width = '100%'; img.style.height = 'auto'; img.style.borderRadius = '8px'; body.appendChild(img); } });
+              });
+
+              const isAdmin = hasFullAccessToTab('leader');
+              const curUid = auth?.currentUser?.uid || '';
+              const isSelf = curUid && String(r.uid||'') === String(curUid);
+
+              const editBtn = document.createElement('button');
+              editBtn.className = 'btn btn-blue'; editBtn.type = 'button'; editBtn.textContent = '編輯';
+              editBtn.style.borderRadius = '0'; editBtn.style.padding = '4px 8px'; editBtn.style.minHeight = '30px'; attachPressInteractions(editBtn);
+              editBtn.disabled = !isAdmin && !isSelf;
+              editBtn.addEventListener('click', () => {
+                if (editBtn.disabled) return;
+                const statusOptions = [ { value: '上班', label: '上班' }, { value: '下班', label: '下班' }, { value: '外出', label: '外出' }, { value: '抵達', label: '抵達' }, { value: '離開', label: '離開' }, { value: '返回', label: '返回' } ];
+                const accountsAll = Array.isArray(appState.accounts) ? appState.accounts : [];
+                const account = accountsAll.find((a) => String(a.uid||a.id||'') === String(r.uid||'')) || null;
+                const allowedCommunityIds = (account && Array.isArray(account.serviceCommunities)) ? new Set(account.serviceCommunities) : null;
+                let communities = [];
+                if (allowedCommunityIds && allowedCommunityIds.size > 0) {
+                  communities = (Array.isArray(appState.communities) ? appState.communities : []).filter((c) => allowedCommunityIds.has(c.id));
+                } else if (account && Array.isArray(account.companyIds) && account.companyIds.length > 0) {
+                  const coSet = new Set(account.companyIds);
+                  communities = (Array.isArray(appState.communities) ? appState.communities : []).filter((c) => coSet.has(c.companyId));
+                } else if (account?.companyId) {
+                  communities = (Array.isArray(appState.communities) ? appState.communities : []).filter((c) => c.companyId === account.companyId);
+                } else {
+                  communities = (Array.isArray(appState.communities) ? appState.communities : []).slice();
+                }
+                communities = communities.slice().sort((a,b)=>{
+                  const ao = typeof a.order === 'number' ? a.order : Number.MAX_SAFE_INTEGER;
+                  const bo = typeof b.order === 'number' ? b.order : Number.MAX_SAFE_INTEGER;
+                  if (ao !== bo) return ao - bo;
+                  return String(a.name||'').localeCompare(String(b.name||''), 'zh-Hant');
+                });
+                const commOptions = communities.map((c) => ({ value: c.id, label: c.name }));
+                const reasonOptions = [
+                  { value: '督察', label: '督察' },
+                  { value: '例會', label: '例會' },
+                  { value: '區大', label: '區大' },
+                  { value: '臨時會', label: '臨時會' },
+                  { value: '簡報', label: '簡報' },
+                  { value: '其他', label: '其他(自定義)' },
+                ];
+                const initDT = formatDatetimeLocalTZ(r.dt, 'Asia/Taipei');
+                openModal({
+                  title: '編輯打卡紀錄',
+                  fields: [
+                    { key: 'status', label: '狀態', type: 'select', options: statusOptions },
+                    { key: 'datetime', label: '日期時間', type: 'datetime-local', step: 60 },
+                    { key: 'locationName', label: '打卡位置', type: 'text' },
+                    { key: 'placeMode', label: '地點來源', type: 'select', options: [ { value: 'list', label: '服務社區清單' }, { value: 'custom', label: '自填地點' } ] },
+                    { key: 'placeSelect', label: '打卡位置', type: 'select', options: commOptions },
+                    { key: 'placeInput', label: '打卡位置', type: 'text', placeholder: '請輸入地點名稱' },
+                    { key: 'reason', label: '事由', type: 'select', options: reasonOptions },
+                    { key: 'reasonOther', label: '自定義事由', type: 'text' },
+                  ],
+                  initial: { status: (r.status || '上班').split('-')[0], datetime: initDT, locationName: r.locationName || '', placeMode: 'list', placeSelect: '', placeInput: '', reason: r.reason || '', reasonOther: '' },
+                  submitText: '儲存',
+                  refreshOnSubmit: false,
+                  onSubmit: async (data) => {
+                    try {
+                      await ensureFirebase();
+                      let loc = String(data.locationName||'').trim();
+                      const stat = String(data.status||'');
+                      if (stat === '外出' || stat === '抵達' || stat === '離開') {
+                        const mode = String(data.placeMode||'list');
+                        if (mode === 'custom') {
+                          loc = String(data.placeInput||'').trim();
+                          if (!loc) { alert('請輸入地點名稱'); return false; }
+                        } else {
+                          const id = String(data.placeSelect||'');
+                          const item = (Array.isArray(appState.communities)?appState.communities:[]).find((c)=>String(c.id||'')===id) || null;
+                          if (!item) { alert('請選擇打卡位置'); return false; }
+                          loc = item.name || '';
+                        }
+                      }
+                      const dtRaw = String(data.datetime||'');
+                      const payload = { locationName: loc, status: stat };
+                      if (stat === '外出' || stat === '抵達' || stat === '離開') {
+                        const rs = String(data.reason||'');
+                        payload.reason = (rs === '其他') ? String(data.reasonOther||'') : rs;
+                      }
+                      if (dtRaw) payload.createdAt = dtRaw;
+                      if (db && fns.updateDoc && fns.doc) {
+                        await withRetry(() => fns.updateDoc(fns.doc(db, 'checkins', r.id), payload));
+                      }
+                      try {
+                        r.locationName = payload.locationName;
+                        r.status = payload.status;
+                        if ('reason' in payload) r.reason = payload.reason;
+                        if (payload.createdAt) { const nd = new Date(payload.createdAt); if (nd instanceof Date && !isNaN(nd)) r.dt = nd; }
+                      } catch {}
+                      renderForDate(sel);
+                      return true;
+                    } catch (e) { alert(`更新失敗：${e?.message || e}`); return false; }
+                  },
+                  afterRender: ({ body }) => {
+                    const st = body.querySelector('[data-key="status"]');
+                    const locInput = body.querySelector('[data-key="locationName"]');
+                    const locRow = locInput?.closest('.form-row');
+                    const modeSel = body.querySelector('[data-key="placeMode"]');
+                    const selRow = body.querySelector('[data-key="placeSelect"]')?.closest('.form-row');
+                    const inputRow = body.querySelector('[data-key="placeInput"]')?.closest('.form-row');
+                    const reasonSel = body.querySelector('[data-key="reason"]');
+                    const reasonOtherRow = body.querySelector('[data-key="reasonOther"]')?.closest('.form-row');
+                    const toggleMode = () => { const v = modeSel?.value || 'list'; if (selRow) selRow.style.display = (v === 'list') ? '' : 'none'; if (inputRow) inputRow.style.display = (v === 'custom') ? '' : 'none'; };
+                    const toggleReason = () => { const v = reasonSel?.value || ''; if (reasonOtherRow) reasonOtherRow.style.display = (v === '其他') ? '' : 'none'; };
+                    const toggleStatus = () => {
+                      const v = String(st?.value||'');
+                      const show = (v === '外出' || v === '抵達' || v === '離開');
+                      if (locRow) locRow.style.display = show ? 'none' : '';
+                      if (modeSel) modeSel.closest('.form-row').style.display = show ? '' : 'none';
+                      if (selRow) selRow.style.display = show && (modeSel?.value === 'list') ? '' : 'none';
+                      if (inputRow) inputRow.style.display = show && (modeSel?.value === 'custom') ? '' : 'none';
+                      if (reasonSel) reasonSel.closest('.form-row').style.display = show ? '' : 'none';
+                      if (reasonOtherRow) reasonOtherRow.style.display = show && (reasonSel?.value === '其他') ? '' : 'none';
+                    };
+                    toggleMode(); toggleReason(); toggleStatus();
+                    modeSel?.addEventListener('change', () => { toggleMode(); toggleStatus(); });
+                    reasonSel?.addEventListener('change', () => { toggleReason(); toggleStatus(); });
+                    st?.addEventListener('change', toggleStatus);
+                  }
+                });
+              });
+
+              const deleteBtn = document.createElement('button');
+              deleteBtn.className = 'btn btn-red'; deleteBtn.type = 'button'; deleteBtn.textContent = '刪除';
+              deleteBtn.style.borderRadius = '0'; deleteBtn.style.padding = '4px 8px'; deleteBtn.style.minHeight = '30px'; attachPressInteractions(deleteBtn);
+              const canDelete = isAdmin || isSelf;
+              deleteBtn.disabled = !canDelete;
+              deleteBtn.addEventListener('click', async () => {
+                if (deleteBtn.disabled) return;
+                const ok = await confirmAction({ title: '確認刪除', text: '確定要刪除此打卡紀錄嗎？', confirmText: '刪除' });
+                if (!ok) return;
+                try { await ensureFirebase(); if (db && fns.deleteDoc && fns.doc) { await withRetry(() => fns.deleteDoc(fns.doc(db, 'checkins', r.id))); } try { const idx = list.findIndex((x) => x.id === r.id); if (idx >= 0) list.splice(idx, 1); } catch {} renderForDate(sel); } catch (e) { alert(`刪除失敗：${e?.message || e}`); }
+              });
+
+              actions.appendChild(mapBtn);
+              actions.appendChild(photoBtn);
+              actions.appendChild(editBtn);
+              actions.appendChild(deleteBtn);
+
               card.appendChild(status);
               card.appendChild(when);
-              listRoot.appendChild(card);
-            });
+              card.appendChild(actions);
+            listRoot.appendChild(card);
+          });
           }
           renderForDate(todayYmd);
           dateInput.addEventListener('change', () => renderForDate(dateInput.value));
+          nameFilter?.addEventListener('change', () => renderForDate(dateInput.value));
         } catch (e) {
           const msg = e?.message || e;
           container.textContent = typeof msg === 'string' ? `載入失敗：${msg}` : "載入失敗";
@@ -4788,7 +4982,7 @@ function hasFullAccessToTab(tab) {
             container.innerHTML = `
               <div class="block" id="leader-block-leaves">
                 <div class="block-header"><span class="block-title">${coName || ''}請假列表</span></div>
-                <div class="block-actions"><label for="leaderLeaveMonth">月份：</label> <select id="leaderLeaveNameFilter" class="input"><option value="">全部</option></select> <input id="leaderLeaveMonth" type="month" /></div>
+                <div class="block-actions"><label for="leaderLeaveMonth"></label> <select id="leaderLeaveNameFilter" class="input"><option value="">全部</option></select> <input id="leaderLeaveMonth" type="month" class="input" /></div>
                 <div class="table-wrapper"><div id="leaderLeaveList">該公司無請假項目</div></div>
               </div>
             `;
@@ -4829,7 +5023,7 @@ function hasFullAccessToTab(tab) {
           container.innerHTML = `
             <div class="block" id="leader-block-leaves">
               <div class="block-header"><span class="block-title">${coName || ''}請假列表</span></div>
-              <div class="block-actions"><label for="leaderLeaveMonth">月份：</label> <select id="leaderLeaveNameFilter" class="input"></select> <input id="leaderLeaveMonth" type="month" /></div>
+              <div class="block-actions"><label for="leaderLeaveMonth"></label> <select id="leaderLeaveNameFilter" class="input"></select> <input id="leaderLeaveMonth" type="month" class="input" /></div>
               <div class="table-wrapper"><div id="leaderLeaveList"></div></div>
             </div>
           `;
@@ -5003,7 +5197,7 @@ function hasFullAccessToTab(tab) {
             const html = `
               <div class="block" id="leader-block-appeals">
                 <div class="block-header"><span class="block-title">${coName || ''}申訴列表</span></div>
-                <div class="block-actions"><select id="leaderPointsNameFilter" class="input"><option value="">全部</option></select><input id="leaderPointsDateFilter" type="date" class="input" /></div>
+                <div class="block-actions"><select id="leaderPointsNameFilter" class="input"><option value="">全部</option></select><input id="leaderPointsDateFilter" type="month" class="input" /></div>
                 <div class="table-wrapper">
                   <table class="table" aria-label="申訴列表">
                     <thead>
@@ -5024,8 +5218,8 @@ function hasFullAccessToTab(tab) {
             container.innerHTML = html;
             const dateInput = container.querySelector('#leaderPointsDateFilter');
             const tzNow2 = tzNow;
-            const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-            if (dateInput) dateInput.value = ymd(tzNow2);
+            const ym = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+            if (dateInput) dateInput.value = ym(tzNow2);
             return;
           }
           const uids = targets.map((a) => a.uid || a.id).filter(Boolean).map(String);
@@ -5057,7 +5251,7 @@ function hasFullAccessToTab(tab) {
           const html = `
             <div class="block" id="leader-block-appeals">
               <div class="block-header"><span class="block-title">${coName || ''}申訴列表</span></div>
-              <div class="block-actions"><select id="leaderPointsNameFilter" class="input"></select><input id="leaderPointsDateFilter" type="date" class="input" /></div>
+              <div class="block-actions"><select id="leaderPointsNameFilter" class="input"></select><input id="leaderPointsDateFilter" type="month" class="input" /></div>
               <div class="table-wrapper">
                 <table class="table" aria-label="申訴列表">
                   <thead>
@@ -5080,7 +5274,7 @@ function hasFullAccessToTab(tab) {
           const dateInput = container.querySelector('#leaderPointsDateFilter');
           const tzNow = nowInTZ('Asia/Taipei');
           const formatDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-          const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+          const ym = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
           const nameOptions = [{ value: '', label: '全部' }].concat(targets.map((a) => ({ value: String(a.uid || a.id || ''), label: a.name || a.email || '使用者' })));
           if (nameFilter) { nameFilter.innerHTML = nameOptions.map((o) => `<option value="${o.value}">${o.label}</option>`).join(''); }
           const nameByUid = new Map();
@@ -5117,10 +5311,9 @@ function hasFullAccessToTab(tab) {
             const v = String(dateInput?.value || '');
             const y = Number(v.split('-')[0] || tzNow.getFullYear());
             const m = Number((v.split('-')[1] || String(tzNow.getMonth()+1)).padStart(2,'0')) - 1;
-            const d = Number((v.split('-')[2] || String(tzNow.getDate())).padStart(2,'0'));
             const selUid = String(nameFilter?.value || '').trim();
-            const start = new Date(y, m, d);
-            const end = new Date(y, m, d + 1);
+            const start = new Date(y, m, 1);
+            const end = new Date(y, m + 1, 1);
             const rows = appeals
               .filter((a) => a.dt >= start && a.dt < end && (!selUid || String(a.uid||'') === selUid))
               .sort((a,b) => b.dt - a.dt)
@@ -5141,9 +5334,9 @@ function hasFullAccessToTab(tab) {
                 const deleteDisabled = (!isAdmin) ? 'disabled' : '';
                 return `<tr data-id="${a.id}"><td>${a.name}</td><td>${dtStr}</td><td>${reason}</td><td>${statusFlag}</td><td>${points}</td><td>${text}</td><td class="cell-actions"><button class="${approveCls}" data-act="approve" data-id="${a.id}" ${approveDisabled}>核准</button> <button class="${rejectCls}" data-act="reject" data-id="${a.id}" ${rejectDisabled}>拒絕</button> <button class="btn btn-blue" data-act="edit" data-id="${a.id}" ${editDisabled}>編輯</button> <button class="btn btn-red" data-act="delete" data-id="${a.id}" ${deleteDisabled}>刪除</button></td></tr>`;
               }).join('');
-            tbody.innerHTML = rows || `<tr><td colspan="7">該日無申訴紀錄</td></tr>`;
+            tbody.innerHTML = rows || `<tr><td colspan="7">該月無申訴紀錄</td></tr>`;
           }
-          if (dateInput) dateInput.value = ymd(tzNow);
+          if (dateInput) dateInput.value = ym(tzNow);
           renderAppeals();
           dateInput?.addEventListener('change', () => { renderAppeals(); });
           nameFilter?.addEventListener('change', () => { renderAppeals(); });
@@ -5165,6 +5358,7 @@ function hasFullAccessToTab(tab) {
                 await withRetry(() => fns.setDoc(fns.doc(db, 'pointAppeals', id), payload, { merge: true }));
                 try { rec.state = newState; if (newState === '核准') rec.points = 0; } catch {}
                 renderAppeals();
+                try { await refreshSubtabBadges(); } catch {}
               } else if (act === 'edit') {
                 if (!isAdmin) { alert('權限不足：不可編輯'); return; }
                 openModal({
@@ -5180,6 +5374,7 @@ function hasFullAccessToTab(tab) {
                       await withRetry(() => fns.setDoc(fns.doc(db, 'pointAppeals', id), payload, { merge: true }));
                       try { rec.state = nv; if (nv === '核准') rec.points = 0; } catch {}
                       renderAppeals();
+                      try { await refreshSubtabBadges(); } catch {}
                       return true;
                     } catch (err) { alert(`更新失敗：${err?.message || err}`); return false; }
                   },
@@ -5192,6 +5387,7 @@ function hasFullAccessToTab(tab) {
                 await withRetry(() => fns.deleteDoc(fns.doc(db, 'pointAppeals', id)));
                 try { const i = appeals.findIndex((x) => x.id === id); if (i >= 0) appeals.splice(i, 1); } catch {}
                 renderAppeals();
+                try { await refreshSubtabBadges(); } catch {}
               }
             } catch (err) { alert(`操作失敗：${err?.message || err}`); }
           });
@@ -5225,10 +5421,8 @@ function hasFullAccessToTab(tab) {
           const center = { lat: Number(latStr), lng: Number(lngStr) };
           const radius = Number(coObj.radiusMeters || 100);
           const html = `
-            <div class="block" id="leader-block-map">
-              <div class="block-header"><span class="block-title">${coObj?.name || ''}地圖</span></div>
-            </div>
-            <div id="leaderMapSplit" style="display:grid; grid-template-rows: 1fr 1fr; height: 60vh; gap: 12px;">
+            <div id="leaderMapSplit" style="display:grid; grid-template-rows: auto 1fr 1fr; height: 60vh; gap: 12px;">
+              <div class="block-header centered"><span class="block-title">${coObj?.name || ''}人員地圖</span></div>
               <div id="leaderMapView" style="width:100%; height:100%; border-radius:12px; overflow:hidden;"></div>
               <div id="leaderStatusView" class="table-wrapper" style="width:100%; height:100%;">
                 <table class="table" aria-label="幹部狀態">
@@ -5333,17 +5527,24 @@ function hasFullAccessToTab(tab) {
             const status = r.status || '';
             const baseSt = String(status).split('-')[0];
             const stCls = (baseSt === '上班') ? 'work' : (baseSt === '下班') ? 'off' : (baseSt === '外出') ? 'out' : (baseSt === '抵達') ? 'arrive' : (baseSt === '離開') ? 'leave' : (baseSt === '返回') ? 'return' : '';
-            const flagHtml = r.inRadius ? '<span class="status-flag good">正常</span>' : '<span class="status-flag bad">異常</span>';
-            const src = photoByUid.get(uid) || r.photoData || '';
-            const imgCell = src ? `<img src="${src}" alt="頭像" style="width:36px;height:36px;border-radius:50%;object-fit:cover;"/>` : '';
-            rows.push(`<tr data-uid="${uid}"><td data-col="avatar">${imgCell}</td><td data-col="name">${nm}</td><td>${when}</td><td><span class="status-label ${stCls}">${place}</span></td><td><span class="status-label ${stCls}">${status}</span></td><td>${flagHtml}</td></tr>`);
+          const flagHtml = r.inRadius ? '<span class="status-flag good">正常</span>' : '<span class="status-flag bad">異常</span>';
+          const src = photoByUid.get(uid) || r.photoData || '';
+          const imgCell = src ? `<button class="avatar-btn" type="button" data-src="${src}" data-name="${nm}" style="background:transparent;border:none;padding:0;"><img src="${src}" alt="頭像" class="user-photo"/></button>` : '';
+          rows.push(`<tr data-uid="${uid}"><td data-col="avatar">${imgCell}</td><td data-col="name">${nm}</td><td>${when}</td><td><span class="status-label ${stCls}">${place}</span></td><td><span class="status-label ${stCls}">${status}</span></td><td>${flagHtml}</td></tr>`);
           });
           tbody.innerHTML = rows.join('') || `<tr><td colspan="6">無資料</td></tr>`;
           tbody.addEventListener('click', (e) => {
+            const btn = e.target.closest('button.avatar-btn');
+            if (btn) {
+              const src = btn.dataset.src || '';
+              const nm = btn.dataset.name || '';
+              openModal({ title: nm ? `${nm}的頭像` : '頭像', fields: [], submitText: '', afterRender: ({ body }) => { const img = document.createElement('img'); img.src = src; img.alt = nm || '頭像'; img.style.width = '100%'; img.style.height = 'auto'; img.style.maxHeight = '60vh'; img.style.objectFit = 'contain'; body.appendChild(img); } });
+              return;
+            }
             const td = e.target.closest('td');
             if (!td) return;
             const col = td.dataset.col || '';
-            if (col !== 'avatar' && col !== 'name') return;
+            if (col !== 'name') return;
             const tr = td.closest('tr');
             const uid = tr && tr.dataset.uid;
             if (!uid) return;
@@ -6495,8 +6696,8 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
           const todayYmd = `${tzNow.getFullYear()}-${String(tzNow.getMonth()+1).padStart(2,'0')}-${String(tzNow.getDate()).padStart(2,'0')}`;
           container.innerHTML = `
             <div class="roster-datebar">
-              <label for="recordDate">日期：</label>
-              <input id="recordDate" type="date" />
+              <label for="recordDate"></label>
+              <input id="recordDate" type="date" class="input" />
             </div>
             <div id="recordList"></div>
           `;
@@ -6761,8 +6962,7 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
           const todayYm = `${y}-${String(m).padStart(2,'0')}`;
           container.innerHTML = `
             <div class="roster-datebar">
-              <label for="leaveMonth">月份：</label>
-              <input id="leaveMonth" type="month" />
+              <input id="leaveMonth" type="month" class="input" />
               <button id="btnAddLeave" class="btn btn-orange" type="button">新增請假</button>
             </div>
             <div id="leaveList"></div>
@@ -6843,7 +7043,6 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
                     { key: 'endAt', label: '結束', type: 'datetime-local', step: 60 },
                     { key: 'reason', label: '原因', type: 'text' },
                     { key: 'attachment', label: '上傳照片', type: 'file', accept: 'image/png,image/jpeg' },
-                    { key: 'deletePhoto', label: '刪除照片', type: 'checkbox' },
                   ],
                   initial: { type: r.type || '事假', startAt: initS, endAt: initE, reason: r.reason || '' },
                   submitText: '儲存',
@@ -6858,15 +7057,11 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
                         reason: String(data.reason || ''),
                         updatedAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date(networkNowMs()).toISOString(),
                       };
-                      if (data.deletePhoto) {
-                        payload.attachmentData = '';
-                      } else {
-                        const incoming = String(data.attachment || window.__leaveAttachmentData || '');
-                        if (incoming) {
-                          payload.attachmentData = incoming;
-                        } else if (typeof r.attachmentData === 'string') {
-                          payload.attachmentData = r.attachmentData;
-                        }
+                      const incoming = String(data.attachment || window.__leaveAttachmentData || '');
+                      if (incoming) {
+                        payload.attachmentData = incoming;
+                      } else if (typeof r.attachmentData === 'string') {
+                        payload.attachmentData = r.attachmentData;
                       }
                       if (db && fns.updateDoc && fns.doc) {
                         await withRetry(() => fns.updateDoc(fns.doc(db, 'leaveRequests', r.id), payload));
@@ -6893,6 +7088,7 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
                   },
                   afterRender: ({ body }) => {
                     try {
+                      const fileInput = body.querySelector('[data-key="attachment"]');
                       if (r.attachmentData) {
                         const img = document.createElement('img');
                         img.src = r.attachmentData;
@@ -6900,35 +7096,24 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
                         img.style.width = '100%';
                         img.style.height = 'auto';
                         img.style.borderRadius = '8px';
+                        img.className = 'leave-photo-preview';
                         attachPressInteractions(img);
-                        img.addEventListener('click', () => {
-                          openModal({
-                            title: '照片預覽',
-                            fields: [],
-                            submitText: '',
-                            refreshOnSubmit: false,
-                            onSubmit: async () => true,
-                            afterRender: ({ body }) => {
-                              const v = document.createElement('img');
-                              v.src = r.attachmentData;
-                              v.alt = '照片預覽';
-                              v.style.width = '100%';
-                              v.style.maxHeight = '80vh';
-                              v.style.objectFit = 'contain';
-                              body.appendChild(v);
-                            }
-                          });
-                        });
-                        body.prepend(img);
+                        img.addEventListener('click', () => { try { fileInput?.click(); } catch {} });
+                        const fileRow = fileInput ? fileInput.closest('.form-row') : null;
+                        if (fileRow && fileRow.parentElement) { fileRow.parentElement.insertBefore(img, fileRow.nextSibling); } else { body.appendChild(img); }
                       }
-                      const fileInput = body.querySelector('[data-key="attachment"]');
                       if (fileInput) {
                         fileInput.addEventListener('change', () => {
                           try {
                             const f = fileInput.files?.[0];
                             if (!f) { window.__leaveAttachmentData = ''; return; }
                             const reader = new FileReader();
-                            reader.onload = () => { window.__leaveAttachmentData = String(reader.result || ''); };
+                            reader.onload = () => {
+                              const url = String(reader.result || '');
+                              window.__leaveAttachmentData = url;
+                              const preview = body.querySelector('.leave-photo-preview');
+                              if (preview) preview.src = url;
+                            };
                             reader.readAsDataURL(f);
                           } catch { window.__leaveAttachmentData = ''; }
                         });
@@ -6957,21 +7142,20 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
               });
               const actions = document.createElement('div');
               actions.className = 'record-actions';
-              actions.appendChild(btnEdit);
-              actions.appendChild(btnDel);
               if (r.attachmentData) {
-                const photoPreview = document.createElement('img');
-                photoPreview.src = r.attachmentData;
-                photoPreview.style.width = '80px';
-                photoPreview.style.height = '80px';
-                photoPreview.style.aspectRatio = '1';
-                photoPreview.style.objectFit = 'cover';
-                attachPressInteractions(photoPreview);
-                photoPreview.addEventListener('click', () => {
+                const photoBtn = document.createElement('button');
+                photoBtn.className = 'btn btn-darkgrey';
+                photoBtn.type = 'button';
+                photoBtn.textContent = '照片';
+                photoBtn.style.borderRadius = '0';
+                photoBtn.style.padding = '4px 8px';
+                photoBtn.style.minHeight = '30px';
+                attachPressInteractions(photoBtn);
+                photoBtn.addEventListener('click', () => {
                   openModal({
                     title: '照片預覽',
                     fields: [],
-                    submitText: '',
+                    submitText: '關閉',
                     refreshOnSubmit: false,
                     onSubmit: async () => true,
                     afterRender: ({ body }) => {
@@ -6985,8 +7169,10 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
                     }
                   });
                 });
-                status.appendChild(photoPreview);
+                actions.appendChild(photoBtn);
               }
+              actions.appendChild(btnEdit);
+              actions.appendChild(btnDel);
               card.appendChild(status);
               card.appendChild(when);
               card.appendChild(actions);
@@ -7602,12 +7788,13 @@ function renderSettingsRoles() {
   const addBtn = container.querySelector('#btnAddRole');
   const role = appState.currentUserRole || '一般';
   const canWrite = hasFullAccessToTab('settings');
+  const isAdminRole = String(appState.currentUserRole || '') === '系統管理員';
   if (!canWrite) { try { addBtn?.parentElement?.removeChild(addBtn); } catch {} }
   (async () => {
     await loadRolesFromFirestore();
     const rows = (appState.rolesConfig || []).map((r) => {
       const tabs = Array.isArray(r.allowedTabs) ? r.allowedTabs.map((t) => toLabel(t)).join('、') : '';
-      return `<tr data-id="${r.id || ''}" data-name="${r.name}"><td>${r.name}</td><td>${tabs}</td><td class="cell-actions"><button class="btn" data-act="edit">編輯</button>${isAdmin ? '<button class="btn" data-act="del">刪除</button>' : ''}</td></tr>`;
+      return `<tr data-id="${r.id || ''}" data-name="${r.name}"><td>${r.name}</td><td>${tabs}</td><td class="cell-actions"><button class="btn" data-act="edit">編輯</button>${isAdminRole ? '<button class="btn" data-act="del">刪除</button>' : ''}</td></tr>`;
     }).sort((aHtml, bHtml) => {
       const getName = (rowHtml) => {
         const m = rowHtml.match(/data-name="([^"]+)"/);
