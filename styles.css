@@ -148,6 +148,19 @@ button[disabled] { cursor: not-allowed; }
 .table tbody td { border-bottom: 1px solid #f3f4f6; padding: 8px; font-size: 14px; vertical-align: top; white-space: nowrap; }
 .table .cell-actions { white-space: nowrap; }
 .table-wrapper { width: 100%; overflow-x: auto; }
+/* 幹部地圖下方列表：響應式欄寬與換行 */
+#leaderStatusBlock .table { table-layout: fixed; width: 100%; min-width: 100%; }
+#leaderStatusBlock .table thead th,
+#leaderStatusBlock .table tbody td { white-space: nowrap; }
+#leaderStatusView { overflow-x: auto; }
+#leaderStatusBlock .table thead th:nth-child(1),
+#leaderStatusBlock .table tbody td:nth-child(1) { width: 56px; }
+/* 僅固定頭像欄寬，其餘欄位由容器水平捲動呈現 */
+#leaderStatusBlock .table .user-photo { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; }
+@media (max-width: 480px) {
+  #leaderStatusBlock .table thead th { font-size: 12px; padding: 6px; }
+  #leaderStatusBlock .table tbody td { font-size: 12px; padding: 6px; }
+}
 
 /* 通用彈窗 */
 .modal-root { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(17, 24, 39, 0.35); z-index: 9999; padding: 16px; }
@@ -562,3 +575,7 @@ body.status-leave-request { --hero-pulse-rgb: 245,124,0; }
 
 /* 子分頁選擇器列高一致 */
 .subtab-select { height: 36px; min-height: 36px; font-size: 14px; padding: 0 10px; border: 1px solid #e5e7eb; border-radius: 8px; background: #ffffff; }
+#leaderMapSplit { width: 100%; max-width: 100%; }
+#leaderMapView { width: 100%; max-width: 100%; }
+#leaderStatusBlock { width: 100%; max-width: 100%; }
+#leaderSection .panel { max-width: 100%; overflow-x: hidden; }

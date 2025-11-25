@@ -5505,38 +5505,42 @@ function hasFullAccessToTab(tab) {
           const companies = Array.isArray(appState.companies) ? appState.companies : [];
           const coObj = companies.find((c) => String(c.id||'') === String(coId) || String(c.name||'') === String(coId)) || null;
           if (!coObj || !coObj.coords) { container.textContent = "公司未設定座標"; return; }
-          const allowedRoles = ["系統管理員","管理層","高階主管","初階主管","行政"];
+          const allowedRoles = ["高階主管","管理層","初階主管","行政"];
           const targets = accounts.filter((a) => {
             const ids0 = Array.isArray(a.companyIds) ? a.companyIds : (a.companyId ? [a.companyId] : []);
             const ids = ids0.map((x) => String(x||'').trim());
             const idOk = ids.includes(String(coId)) || ids.includes(String(coObj.name||''));
             const roleOk = allowedRoles.includes(String(a.role||""));
-            return roleOk && idOk;
+            return idOk && roleOk;
           });
           const [latStr, lngStr] = String(coObj.coords).split(',').map((s)=>s.trim());
           const center = { lat: Number(latStr), lng: Number(lngStr) };
           const radius = Number(coObj.radiusMeters || 100);
           const html = `
-            <div id="leaderMapSplit" style="display:grid; grid-template-rows: auto 1fr 1fr; height: 60vh; gap: 12px;">
+            <div id="leaderMapSplit" style="display:grid; grid-template-rows: auto 1fr auto; height: 60vh; gap: 12px;">
               <div class="block-header centered"><span class="block-title">${coObj?.name || ''}人員地圖</span></div>
               <div id="leaderMapView" style="width:100%; height:100%; border-radius:12px; overflow:hidden;"></div>
-              <div id="leaderStatusView" class="table-wrapper" style="width:100%; height:100%;">
-                <table class="table" aria-label="幹部狀態">
-                  <thead>
-                    <tr>
-                      <th>大頭照</th>
-                      <th>姓名</th>
-                      <th>時間</th>
-                      <th>地點</th>
-                      <th>狀態</th>
-                      <th>範圍</th>
-                    </tr>
-                  </thead>
-                  <tbody id="leaderStatusTbody"><tr><td colspan="6">載入中...</td></tr></tbody>
-                </table>
+              <div class="block" id="leaderStatusBlock">
+                <div class="block-header"><span class="block-title">人員當日打卡狀況</span></div>
+                <div id="leaderStatusView" class="table-wrapper" style="width:100%; max-height: 20vh; overflow: auto;">
+                  <table class="table" aria-label="人員當日打卡狀況">
+                    <thead>
+                      <tr>
+                        <th>大頭照</th>
+                        <th>姓名</th>
+                        <th>時間</th>
+                        <th>地點</th>
+                        <th>狀態</th>
+                        <th>範圍</th>
+                      </tr>
+                    </thead>
+                    <tbody id="leaderStatusTbody"><tr><td colspan="6">載入中...</td></tr></tbody>
+                  </table>
+                </div>
               </div>
             </div>`;
           container.innerHTML = html;
+          
           const mapRoot = document.getElementById('leaderMapView');
           const tbody = document.getElementById('leaderStatusTbody');
           const map = new maps.Map(mapRoot, { center, zoom: 15, mapTypeId: 'roadmap', disableDefaultUI: true });
@@ -5616,19 +5620,24 @@ function hasFullAccessToTab(tab) {
           } catch {}
           const formatDT = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
           const rows = [];
-          lastByUid.forEach((r, uid) => {
-            const nm = nameByUid.get(uid) || r.name || '使用者';
-            const when = r.dt instanceof Date ? formatDT(r.dt) : '';
-            const place = r.locationName || '';
-            const status = r.status || '';
+          targets.forEach((a) => {
+            const uid = String(a.uid || a.id || '');
+            if (!uid) return;
+            const r = lastByUid.get(uid) || null;
+            const nm = nameByUid.get(uid) || a.name || a.email || '使用者';
+            const when = (r && r.dt instanceof Date) ? formatDT(r.dt) : '';
+            const place = r ? (r.locationName || '') : '';
+            const status = r ? (r.status || '') : '';
             const baseSt = String(status).split('-')[0];
             const stCls = (baseSt === '上班') ? 'work' : (baseSt === '下班') ? 'off' : (baseSt === '外出') ? 'out' : (baseSt === '抵達') ? 'arrive' : (baseSt === '離開') ? 'leave' : (baseSt === '返回') ? 'return' : '';
-          const flagHtml = r.inRadius ? '<span class="status-flag good">正常</span>' : '<span class="status-flag bad">異常</span>';
-          const src = photoByUid.get(uid) || r.photoData || '';
-          const imgCell = src ? `<button class="avatar-btn" type="button" data-src="${src}" data-name="${nm}" style="background:transparent;border:none;padding:0;"><img src="${src}" alt="頭像" class="user-photo"/></button>` : '';
-          rows.push(`<tr data-uid="${uid}"><td data-col="avatar">${imgCell}</td><td data-col="name">${nm}</td><td>${when}</td><td><span class="status-label ${stCls}">${place}</span></td><td><span class="status-label ${stCls}">${status}</span></td><td>${flagHtml}</td></tr>`);
+            const flagHtml = r ? (r.inRadius ? '<span class="status-flag good">正常</span>' : '<span class="status-flag bad">異常</span>') : '';
+            const src = photoByUid.get(uid) || (r ? r.photoData : '') || '';
+            const imgCell = src ? `<button class="avatar-btn" type="button" data-src="${src}" data-name="${nm}" style="background:transparent;border:none;padding:0;"><img src="${src}" alt="頭像" class="user-photo"/></button>` : '';
+            rows.push(`<tr data-uid="${uid}"><td data-col="avatar">${imgCell}</td><td data-col="name">${nm}</td><td>${when}</td><td><span class="status-label ${stCls}">${place}</span></td><td><span class="status-label ${stCls}">${status}</span></td><td>${flagHtml}</td></tr>`);
           });
           tbody.innerHTML = rows.join('') || `<tr><td colspan="6">無資料</td></tr>`;
+
+          
           tbody.addEventListener('click', (e) => {
             const btn = e.target.closest('button.avatar-btn');
             if (btn) {
