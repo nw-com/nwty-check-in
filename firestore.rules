@@ -26,6 +26,11 @@ service cloud.firestore {
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "行政"
       );
     }
+    function canTab(tab) {
+      return isLoggedIn() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.pagePermissions != null &&
+        (tab in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.pagePermissions);
+    }
 
     // 使用者資料：可讀（登入），建立/刪除（管理員），本人更新但不可改變角色
     match /users/{uid} {
@@ -58,7 +63,7 @@ service cloud.firestore {
 
     // 打卡紀錄：登入者可讀與建立，更新/刪除限管理員或本人
     match /checkins/{docId} {
-      allow read: if isOfficer() || (isLoggedIn() && resource.data.uid == request.auth.uid);
+      allow read: if canTab('leader') || isOfficer() || (isLoggedIn() && resource.data.uid == request.auth.uid);
       allow create: if isLoggedIn() && request.resource.data.uid == request.auth.uid;
       allow update, delete: if isAdmin() || (isLoggedIn() && resource.data.uid == request.auth.uid);
     }
@@ -89,17 +94,15 @@ service cloud.firestore {
 
     // 請假申請：本人可讀與建立；更新/刪除限管理員或本人（且未核准）
     match /leaveRequests/{docId} {
-      allow read: if isOfficer() || isAdmin() || (isLoggedIn() && resource.data.uid == request.auth.uid);
+      allow read: if canTab('leader') || isOfficer() || isAdmin() || (isLoggedIn() && resource.data.uid == request.auth.uid);
       allow create: if isLoggedIn() && request.resource.data.uid == request.auth.uid && request.resource.data.status == '送審';
-      // 僅管理員可變更狀態；本人僅能在未核准時更新其它欄位（狀態不可變更）
-      allow update: if isAdmin() || (
+      allow update: if canTab('leader') || isAdmin() || (
         isLoggedIn() &&
         resource.data.uid == request.auth.uid &&
         resource.data.status != '核准' &&
         request.resource.data.status == resource.data.status
       );
-      // 本人僅能刪除未核准的申請；管理員不受限
-      allow delete: if isAdmin() || (
+      allow delete: if isAdmin() || canTab('leader') || (
         isLoggedIn() && resource.data.uid == request.auth.uid && resource.data.status != '核准'
       );
     }
@@ -114,10 +117,16 @@ service cloud.firestore {
 
     // 計點申訴：本人可建立與讀取（僅本人或管理員）；管理員可讀寫刪除
     match /pointAppeals/{docId} {
-      allow read: if isOfficer() || isAdmin() || (isLoggedIn() && resource.data.uid == request.auth.uid);
+      allow read: if canTab('leader') || isOfficer() || isAdmin() || (isLoggedIn() && resource.data.uid == request.auth.uid);
       allow create: if isLoggedIn() && request.resource.data.uid == request.auth.uid && request.resource.data.state == '送審';
-      allow update: if isAdmin();
-      allow delete: if isAdmin();
+      allow update: if canTab('leader') || isAdmin();
+      allow delete: if canTab('leader') || isAdmin();
+    }
+    match /makeupRequests/{docId} {
+      allow read: if canTab('leader') || isOfficer() || isAdmin() || (isLoggedIn() && resource.data.uid == request.auth.uid);
+      allow create: if isLoggedIn() && request.resource.data.uid == request.auth.uid && request.resource.data.state == '送審';
+      allow update: if canTab('leader') || isAdmin();
+      allow delete: if canTab('leader') || isAdmin();
     }
 
     // 角色設定：登入者可讀；僅系統管理員可寫入

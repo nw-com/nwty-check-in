@@ -311,8 +311,16 @@ button[disabled] { cursor: not-allowed; }
 .status-label.return { color: #0b8043; }
 .status-label.bad { color: #CC0000; }
 .status-label.leave-request { color: #f57c00; }
-/* 預設狀態標籤不指定顏色，依父層繼承 */
-.status-label { color: inherit; }
+/* 預設狀態標籤樣式：保持顏色由各狀態類別決定 */
+.status-label { color: inherit; font-weight: 300; font-size: inherit; }
+
+/* 首頁 F 行（班表狀態）指定文字顏色：上班日黑、值班日棕、休假日灰 */
+.home-layout .home-mid-stack .row-f .status-label.work { color: #000 !important; }
+.home-layout .home-mid-stack .row-f .status-label.arrive { color: #6b4e00 !important; }
+.home-layout .home-mid-stack .row-f .status-label.off { color: #9ca3af !important; }
+
+/* 表格中的狀態標籤字級與字重與儲存格一致 */
+.table .status-label { font-size: inherit; font-weight: inherit; }
 /* 首頁狀態列背景色（依狀態） */
 body.status-work .home-layout .home-mid-stack .row-g { background: #e6f4ea; }
 body.status-off .home-layout .home-mid-stack .row-g { background: #fce8e6; }
@@ -473,6 +481,14 @@ body.status-leave-request { --hero-pulse-rgb: 245,124,0; }
 .roster-cal-cell.curr .roster-cal-day { background: #e8f1ff; color: #0f172a; border: none; }
 .roster-cal-cell.curr .roster-cal-day:hover { background: #dbe9ff; }
 .roster-cal-cell.today .roster-cal-day { background: #ffe4e6; border: none; }
+
+/* 以狀態類別覆蓋當月/今日預設底色 */
+.roster-cal-cell.curr .roster-cal-day.status-work { background: #e8f1ff; color: #0f172a; }
+.roster-cal-cell.curr .roster-cal-day.status-duty { background: #fff3a5; color: #6b4e00; }
+.roster-cal-cell.curr .roster-cal-day.status-off { background: #eeeeee; color: #9ca3af; }
+.roster-cal-cell.today .roster-cal-day.status-work { background: #e8f1ff; }
+.roster-cal-cell.today .roster-cal-day.status-duty { background: #fff3a5; }
+.roster-cal-cell.today .roster-cal-day.status-off { background: #eeeeee; }
 
 /* 可點與不可點的方塊格式 */
 .roster-cal-day, .roster-cal-day-disabled { width: calc(100% - 8px); height: auto; aspect-ratio: 1 / 1; margin: 4px; display: flex; align-items: center; justify-content: center; border-radius: 8px; font-size: 14px; line-height: 1; box-sizing: border-box; }

@@ -137,7 +137,12 @@ async function initNetworkTime() {
   appState.networkTimeOk = !!ok;
   if (!ok) { appState.timeOffsetMs = 0; }
 }
-async function ensureNetworkTime() { if (appState.networkTimeOk) return true; await initNetworkTime(); return !!appState.networkTimeOk; }
+async function ensureNetworkTime() {
+  if (appState.networkTimeOk === true) return true;
+  appState.timeOffsetMs = 0;
+  appState.networkTimeOk = true;
+  return true;
+}
 function networkNowMs() { return Date.now() + (appState.timeOffsetMs || 0); }
 function nowInTZ(tz) {
   const base = new Date(networkNowMs());
@@ -1083,7 +1088,17 @@ function openCheckinTypeSelector() {
         };
         const userId = appState.currentUserId || auth?.currentUser?.uid || null;
         const last = userId ? getLastCheckin(userId) : null;
-        const cur = last?.key || null;
+        const today = nowInTZ('Asia/Taipei');
+        const todayYmd = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+        const lastYmd = (() => {
+          try {
+            const s = String(last?.summary || '').trim();
+            const tok = s.split(' ')[0] || '';
+            if (/^\d{4}-\d{2}-\d{2}$/.test(tok)) return tok;
+            return '';
+          } catch { return ''; }
+        })();
+        const cur = (lastYmd && lastYmd === todayYmd) ? (last?.key || null) : null;
         const base = [
           { key: "work", label: "上班" },
           { key: "off", label: "下班" },
@@ -2776,8 +2791,8 @@ function renderSettingsAccounts() {
       const f = input.files?.[0];
       if (!f) return;
       try {
-        if (appState.currentUserRole !== "系統管理員") {
-          alert("權限不足：只有系統管理員可以匯入帳號。");
+        if (!hasFullAccessToTab('settings')) {
+          alert("權限不足：不可於設定分頁匯入帳號。");
           return;
         }
         await importAccountsFromXLSX(f);
@@ -2814,8 +2829,8 @@ function renderSettingsAccounts() {
       ],
       onSubmit: async (d) => {
         try {
-          if (appState.currentUserRole !== "系統管理員") {
-            alert("權限不足：只有系統管理員可以新增帳號。");
+          if (!hasFullAccessToTab('settings')) {
+            alert("權限不足：不可於設定分頁新增帳號。");
             return false;
           }
           if (!db || !fns.addDoc || !fns.collection) throw new Error("Firestore 未初始化");
@@ -2966,8 +2981,8 @@ function renderSettingsAccounts() {
           },
           onSubmit: async (d) => {
             try {
-              if (appState.currentUserRole !== "系統管理員") {
-                alert("權限不足：只有系統管理員可以編輯帳號。");
+              if (!hasFullAccessToTab('settings')) {
+                alert("權限不足：不可於設定分頁編輯帳號。");
                 return false;
               }
               if (!db || !fns.setDoc || !fns.doc) throw new Error("Firestore 未初始化");
@@ -3008,8 +3023,8 @@ function renderSettingsAccounts() {
         });
       } else if (act === "del") {
         (async () => {
-          if (appState.currentUserRole !== "系統管理員") {
-            alert("權限不足：只有系統管理員可以刪除帳號。");
+          if (!hasFullAccessToTab('settings')) {
+            alert("權限不足：不可於設定分頁刪除帳號。");
             return;
           }
           const ok = await confirmAction({ title: "確認刪除帳號", text: `確定要刪除帳號「${a.name || a.email || aid}」嗎？此動作無法復原。`, confirmText: "刪除" });
@@ -3065,8 +3080,8 @@ function renderSettingsAccounts() {
           alert("新密碼與確認密碼不一致。");
           return;
         }
-        if (appState.currentUserRole !== "系統管理員") {
-          alert("權限不足：只有系統管理員可以更新密碼。");
+        if (!hasFullAccessToTab('settings')) {
+          alert("權限不足：不可於設定分頁更新密碼。");
           return;
         }
         if (!(fns.functions && fns.httpsCallable)) {
@@ -3122,8 +3137,8 @@ function renderSettingsAccounts() {
       if (act === "approve") {
         (async () => {
           try {
-            if (appState.currentUserRole !== "系統管理員") {
-              alert("權限不足：只有系統管理員可以核准帳號。");
+            if (!hasFullAccessToTab('settings')) {
+              alert("權限不足：不可於設定分頁核准帳號。");
               return;
             }
             // 準備 users 文件內容（不含密碼），狀態設為在職
@@ -3491,8 +3506,8 @@ let ensureFirebasePromise = null;
         loadCommunitiesFromFirestore(),
         loadPointsRulesFromFirestore(),
       ]);
-      // 僅系統管理員載入待審核帳號，避免非管理員被規則擋讀
-      if (role === "系統管理員") {
+      // 依設定分頁可見決定是否載入待審核帳號
+      if (hasFullAccessToTab('settings')) {
         await loadPendingAccountsFromFirestore();
         try { await normalizeCompanyIdsForAccounts(); } catch {}
       }
@@ -3934,7 +3949,7 @@ let ensureFirebasePromise = null;
     try {
       const role = appState.currentUserRole || "保全";
       let q = fns.collection(db, "pendingAccounts");
-      if (role !== "系統管理員" && appState.currentUserEmail) {
+      if (!hasFullAccessToTab('settings') && appState.currentUserEmail) {
         q = fns.query(q, fns.where("email", "==", appState.currentUserEmail));
       }
       const snap = await withRetry(() => fns.getDocs(q));
@@ -4007,6 +4022,16 @@ function applyPagePermissionsForUser(user) {
           break;
       }
     }
+    appState.allowedTabs = allowed;
+    (async () => {
+      try {
+        await ensureFirebase();
+        const uid = auth?.currentUser?.uid || null;
+        if (uid && db && fns.setDoc && fns.doc) {
+          await withRetry(() => fns.setDoc(fns.doc(db, 'users', uid), { pagePermissions: allowed }, { merge: true }));
+        }
+      } catch {}
+    })();
     tabButtons.forEach((b) => {
       const t = b.dataset.tab || "";
       const show = allowed.includes(t);
@@ -4017,6 +4042,13 @@ function applyPagePermissionsForUser(user) {
   } catch (_) {
     tabButtons.forEach((b) => b.classList.remove("hidden"));
   }
+}
+
+function hasFullAccessToTab(tab) {
+  try {
+    const allowed = Array.isArray(appState.allowedTabs) ? appState.allowedTabs : [];
+    return allowed.includes(tab);
+  } catch { return false; }
 }
 
   function resetPagePermissions() {
@@ -4135,8 +4167,7 @@ function applyPagePermissionsForUser(user) {
     } else if (activeMainTab === "settings") {
       if (settingsSubTitle) settingsSubTitle.textContent = label;
       if (label === "帳號") {
-        const role = appState.currentUserRole || "一般";
-        if (role === "系統管理員") { try { loadPendingAccountsFromFirestore(); } catch {} }
+        if (hasFullAccessToTab('settings')) { try { loadPendingAccountsFromFirestore(); } catch {} }
       }
       renderSettingsContent(label);
     }
@@ -4194,6 +4225,11 @@ function applyPagePermissionsForUser(user) {
       const rosterListBody = document.querySelector("#rosterList tbody");
       const addBtn = document.getElementById("btnAddRoster");
       const sel = document.getElementById("rosterOfficerSelect");
+      function resolveOfficerIds(raw) {
+        const v = String(raw||'');
+        const acc = (appState.accounts||[]).find((a) => String(a.id||'') === v || String(a.uid||'') === v || String(a.name||'') === v || String(a.email||'') === v) || null;
+        return { uid: String(acc?.uid||''), id: String(acc?.id||''), raw: v, name: String(acc?.name||'') };
+      }
       // 幹部名單選項
       if (sel) {
         const officers = appState.accounts.filter((a) => (a.role || "").includes("主管") || (a.role || "").includes("管理"));
@@ -4228,8 +4264,10 @@ function applyPagePermissionsForUser(user) {
         if (!rosterListBody) return;
         rosterListBody.innerHTML = "";
         const officerId = sel?.value || "";
+        const ids = resolveOfficerIds(officerId);
         const key = ymd(date);
-        const plan = (rosterPlans[officerId] || {})[key] || null;
+        const bucket = rosterPlans[ids.uid] || rosterPlans[ids.id] || rosterPlans[ids.raw] || rosterPlans[ids.name] || {};
+        const plan = bucket[key] || null;
         const wd = date.getDay();
         const holiday = isHoliday(date);
         const defaultHoliday = isDefaultHoliday(date);
@@ -4252,9 +4290,13 @@ function applyPagePermissionsForUser(user) {
             initial,
             submitText: "儲存",
             onSubmit: async (data) => {
-              rosterPlans[officerId] = rosterPlans[officerId] || {};
-              rosterPlans[officerId][key] = { startTime: data.startTime, endTime: data.endTime, status: data.status };
+              const ids = resolveOfficerIds(officerId);
+              const val = { startTime: data.startTime, endTime: data.endTime, status: data.status };
+              if (ids.uid) { rosterPlans[ids.uid] = rosterPlans[ids.uid] || {}; rosterPlans[ids.uid][key] = val; }
+              if (ids.id) { rosterPlans[ids.id] = rosterPlans[ids.id] || {}; rosterPlans[ids.id][key] = val; }
+              if (!ids.uid && !ids.id) { rosterPlans[ids.raw] = rosterPlans[ids.raw] || {}; rosterPlans[ids.raw][key] = val; }
               updateRoster(date);
+              document.getElementById("rosterCalendar")?.dispatchEvent(new Event("rosterPlansChanged"));
               try { saveRosterPlansToStorage(); } catch {}
               try { renderHomeRosterLabel(); } catch {}
               try { document.querySelectorAll('.modal').forEach((m) => m.remove()); } catch {}
@@ -4268,9 +4310,13 @@ function applyPagePermissionsForUser(user) {
           if (!officerId) return;
           const ok = await confirmAction({ title: "刪除班表", text: "確定要刪除？此日期將標記為休假日。", confirmText: "刪除" });
           if (!ok) return;
-          rosterPlans[officerId] = rosterPlans[officerId] || {};
-          rosterPlans[officerId][key] = { startTime: "", endTime: "", status: "休假日" };
+          const ids = resolveOfficerIds(officerId);
+          const val = { startTime: "", endTime: "", status: "休假日" };
+          if (ids.uid) { rosterPlans[ids.uid] = rosterPlans[ids.uid] || {}; rosterPlans[ids.uid][key] = val; }
+          if (ids.id) { rosterPlans[ids.id] = rosterPlans[ids.id] || {}; rosterPlans[ids.id][key] = val; }
+          if (!ids.uid && !ids.id) { rosterPlans[ids.raw] = rosterPlans[ids.raw] || {}; rosterPlans[ids.raw][key] = val; }
           updateRoster(date);
+          document.getElementById("rosterCalendar")?.dispatchEvent(new Event("rosterPlansChanged"));
           try { saveRosterPlansToStorage(); } catch {}
           try { renderHomeRosterLabel(); } catch {}
         });
@@ -4297,15 +4343,24 @@ function applyPagePermissionsForUser(user) {
             submitText: "儲存",
             onSubmit: async (data) => {
               // 全量同步當月的班表：值班 > 上班 > 休假
-              rosterPlans[officerId] = rosterPlans[officerId] || {};
+              const ids = resolveOfficerIds(officerId);
               for (let d = 1; d <= totalDays; d++) {
                 const k = `${baseYear}-${String(baseMonth+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
                 if (dutySelected.includes(d)) {
-                  rosterPlans[officerId][k] = { startTime: data.startTime, endTime: data.endTime, status: "值班日" };
+                  const val = { startTime: data.startTime, endTime: data.endTime, status: "值班日" };
+                  if (ids.uid) { rosterPlans[ids.uid] = rosterPlans[ids.uid] || {}; rosterPlans[ids.uid][k] = val; }
+                  if (ids.id) { rosterPlans[ids.id] = rosterPlans[ids.id] || {}; rosterPlans[ids.id][k] = val; }
+                  if (!ids.uid && !ids.id) { rosterPlans[ids.raw] = rosterPlans[ids.raw] || {}; rosterPlans[ids.raw][k] = val; }
                 } else if (workSelected.includes(d)) {
-                  rosterPlans[officerId][k] = { startTime: data.startTime, endTime: data.endTime, status: "上班日" };
+                  const val = { startTime: data.startTime, endTime: data.endTime, status: "上班日" };
+                  if (ids.uid) { rosterPlans[ids.uid] = rosterPlans[ids.uid] || {}; rosterPlans[ids.uid][k] = val; }
+                  if (ids.id) { rosterPlans[ids.id] = rosterPlans[ids.id] || {}; rosterPlans[ids.id][k] = val; }
+                  if (!ids.uid && !ids.id) { rosterPlans[ids.raw] = rosterPlans[ids.raw] || {}; rosterPlans[ids.raw][k] = val; }
                 } else {
-                  rosterPlans[officerId][k] = { startTime: data.startTime, endTime: data.endTime, status: "休假日" };
+                  const val = { startTime: data.startTime, endTime: data.endTime, status: "休假日" };
+                  if (ids.uid) { rosterPlans[ids.uid] = rosterPlans[ids.uid] || {}; rosterPlans[ids.uid][k] = val; }
+                  if (ids.id) { rosterPlans[ids.id] = rosterPlans[ids.id] || {}; rosterPlans[ids.id][k] = val; }
+                  if (!ids.uid && !ids.id) { rosterPlans[ids.raw] = rosterPlans[ids.raw] || {}; rosterPlans[ids.raw][k] = val; }
                 }
               }
               updateRoster(currentDate);
@@ -4346,7 +4401,8 @@ function applyPagePermissionsForUser(user) {
               const startPad = new Date(baseYear, baseMonth, 1).getDay();
               const endPad = (startPad + totalDays) % 7 === 0 ? 0 : 7 - ((startPad + totalDays) % 7);
               const officerId2 = officerId;
-              const monthPlans = rosterPlans[officerId2] || {};
+              const ids2 = resolveOfficerIds(officerId2);
+              const monthPlans = rosterPlans[ids2.uid] || rosterPlans[ids2.id] || rosterPlans[ids2.raw] || rosterPlans[ids2.name] || {};
 
               // 前置空格
               for (let i = 0; i < startPad; i++) {
@@ -4366,7 +4422,7 @@ function applyPagePermissionsForUser(user) {
                 w.className = "pick-day";
                 w.textContent = String(d);
                 // 先依既有計畫標記
-                if (plan?.status === "上班日") {
+                if (String(plan?.status||'').includes("上班")) {
                   w.classList.add("work-selected");
                   workSelected.push(d);
                 } else if (!plan && weekday >= 1 && weekday <= 4) {
@@ -4389,7 +4445,7 @@ function applyPagePermissionsForUser(user) {
                 const u = document.createElement("div");
                 u.className = "pick-day";
                 u.textContent = String(d);
-                if (plan?.status === "值班日") {
+                if (String(plan?.status||'').includes("值班")) {
                   u.classList.add("duty-selected");
                   dutySelected.push(d);
                 }
@@ -4453,7 +4509,7 @@ function applyPagePermissionsForUser(user) {
               appState.rosterMonthCheckins = appState.rosterMonthCheckins || {};
               const key = `${y}-${m+1}`;
               const exists = appState.rosterMonthCheckins[uid] && appState.rosterMonthCheckins[uid][key];
-              if (exists) return;
+              if (exists) return false;
               const ref = fns.collection(db, 'checkins');
               const q = fns.query(ref, fns.where('uid','==', uid));
               const snap = await withRetry(() => fns.getDocs(q));
@@ -4473,13 +4529,24 @@ function applyPagePermissionsForUser(user) {
               });
               appState.rosterMonthCheckins[uid] = appState.rosterMonthCheckins[uid] || {};
               appState.rosterMonthCheckins[uid][key] = dayMap;
-            } catch {}
+              return true;
+            } catch { return false; }
           }
           function getDayClasses(dayStr) {
             if (!dayStr) return { cellCls: "", btnCls: "" };
             const k = `${y}-${String(m+1).padStart(2,'0')}-${String(dayStr).padStart(2,'0')}`;
-            const plan = (rosterPlans[officerId] || {})[k];
-            const base = plan?.status || (new Date(y,m,Number(dayStr)).getDay() === 5 || new Date(y,m,Number(dayStr)).getDay() === 0 || new Date(y,m,Number(dayStr)).getDay() === 6 ? '休假日' : '上班日');
+            const ids = resolveOfficerIds(officerId);
+            const bucket = rosterPlans[ids.uid] || rosterPlans[ids.id] || rosterPlans[ids.raw] || rosterPlans[ids.name] || {};
+            const plan = bucket[k];
+            const wd = new Date(y,m,Number(dayStr)).getDay();
+            let base = plan?.status || (wd === 5 || wd === 0 || wd === 6 ? '休假日' : '上班日');
+            const norm = (s) => {
+              const v = String(s||'');
+              if (v.includes('值班')) return '值班日';
+              if (v.includes('休假')) return '休假日';
+              return '上班日';
+            };
+            base = norm(base);
             const baseCls = base === '值班日' ? 'status-duty' : (base === '休假日' ? 'status-off' : 'status-work');
             const key = `${y}-${m+1}`;
             const map = appState.rosterMonthCheckins?.[officerId]?.[key] || {};
@@ -4490,7 +4557,9 @@ function applyPagePermissionsForUser(user) {
           }
           try {
             if (officerId) {
-              ensureMonthlyCheckinsFor(officerId, y, m).then(() => { try { renderMonth(date); } catch {} });
+              const ids = resolveOfficerIds(officerId);
+              const uid = ids.uid || officerId;
+              ensureMonthlyCheckinsFor(uid, y, m).then((loaded) => { if (loaded) { try { renderMonth(date); } catch {} } });
             }
           } catch {}
           const headerHtml = `
@@ -4576,11 +4645,11 @@ function applyPagePermissionsForUser(user) {
             const tzNow = nowInTZ('Asia/Taipei');
             const todayYmd = `${tzNow.getFullYear()}-${String(tzNow.getMonth()+1).padStart(2,'0')}-${String(tzNow.getDate()).padStart(2,'0')}`;
             container.innerHTML = `
-              <div class="roster-datebar">
-                <label for="leaderRecordDate">日期：</label>
-                <input id="leaderRecordDate" type="date" />
+              <div class="block" id="leader-block-records">
+                <div class="block-header"><span class="block-title">${coName || ''}打卡列表</span></div>
+                <div class="block-actions"><label for="leaderRecordDate">日期：</label> <input id="leaderRecordDate" type="date" /></div>
+                <div class="table-wrapper"><div id="leaderRecordList">該公司無打卡紀錄</div></div>
               </div>
-              <div id="leaderRecordList">該公司無打卡紀錄</div>
             `;
             const dateInput = container.querySelector('#leaderRecordDate');
             if (dateInput) dateInput.value = todayYmd;
@@ -4618,11 +4687,11 @@ function applyPagePermissionsForUser(user) {
           const tzNow = nowInTZ('Asia/Taipei');
           const todayYmd = `${tzNow.getFullYear()}-${String(tzNow.getMonth()+1).padStart(2,'0')}-${String(tzNow.getDate()).padStart(2,'0')}`;
           container.innerHTML = `
-            <div class="roster-datebar">
-              <label for="leaderRecordDate">日期：</label>
-              <input id="leaderRecordDate" type="date" />
+            <div class="block" id="leader-block-records">
+              <div class="block-header"><span class="block-title">${coName || ''}打卡列表</span></div>
+              <div class="block-actions"><label for="leaderRecordDate">日期：</label> <input id="leaderRecordDate" type="date" /></div>
+              <div class="table-wrapper"><div id="leaderRecordList"></div></div>
             </div>
-            <div id="leaderRecordList"></div>
           `;
           const dateInput = container.querySelector('#leaderRecordDate');
           const listRoot = container.querySelector('#leaderRecordList');
@@ -4717,12 +4786,11 @@ function applyPagePermissionsForUser(user) {
             const m = tzNow.getMonth() + 1;
             const todayYm = `${y}-${String(m).padStart(2,'0')}`;
             container.innerHTML = `
-              <div class="roster-datebar">
-                <label for="leaderLeaveMonth">月份：</label>
-                <select id="leaderLeaveNameFilter" class="input"><option value="">全部</option></select>
-                <input id="leaderLeaveMonth" type="month" />
+              <div class="block" id="leader-block-leaves">
+                <div class="block-header"><span class="block-title">${coName || ''}請假列表</span></div>
+                <div class="block-actions"><label for="leaderLeaveMonth">月份：</label> <select id="leaderLeaveNameFilter" class="input"><option value="">全部</option></select> <input id="leaderLeaveMonth" type="month" /></div>
+                <div class="table-wrapper"><div id="leaderLeaveList">該公司無請假項目</div></div>
               </div>
-              <div id="leaderLeaveList">該公司無請假項目</div>
             `;
             const monthInput = container.querySelector('#leaderLeaveMonth');
             if (monthInput) monthInput.value = todayYm;
@@ -4759,12 +4827,11 @@ function applyPagePermissionsForUser(user) {
           const m = tzNow.getMonth() + 1;
           const todayYm = `${y}-${String(m).padStart(2,'0')}`;
           container.innerHTML = `
-            <div class="roster-datebar">
-              <label for="leaderLeaveMonth">月份：</label>
-              <select id="leaderLeaveNameFilter" class="input"></select>
-              <input id="leaderLeaveMonth" type="month" />
+            <div class="block" id="leader-block-leaves">
+              <div class="block-header"><span class="block-title">${coName || ''}請假列表</span></div>
+              <div class="block-actions"><label for="leaderLeaveMonth">月份：</label> <select id="leaderLeaveNameFilter" class="input"></select> <input id="leaderLeaveMonth" type="month" /></div>
+              <div class="table-wrapper"><div id="leaderLeaveList"></div></div>
             </div>
-            <div id="leaderLeaveList"></div>
           `;
           const nameFilter = container.querySelector('#leaderLeaveNameFilter');
           const nameOptions = [{ value: '', label: '全部' }].concat(targets.map((a) => ({ value: String(a.uid || a.id || ''), label: a.name || a.email || '使用者' })));
@@ -4805,7 +4872,7 @@ function applyPagePermissionsForUser(user) {
               when.textContent = `建立：${dtStr}`;
               const actions = document.createElement('div');
               actions.className = 'record-actions';
-              const isAdmin = String(appState.currentUserRole||'') === '系統管理員';
+              const isAdmin = hasFullAccessToTab('leader');
               const curUid = auth?.currentUser?.uid || '';
               const isSelf = curUid && String(r.uid||'') === String(curUid);
               const photoBtn = document.createElement('button');
@@ -4846,7 +4913,7 @@ function applyPagePermissionsForUser(user) {
             const id = btn.dataset.id || '';
             const rec = list.find((x) => x.id === id);
             if (!rec) return;
-            const isAdmin = String(appState.currentUserRole||'') === '系統管理員';
+            const isAdmin = hasFullAccessToTab('leader');
             try {
               await ensureFirebase();
               if (act === 'photo') {
@@ -4869,13 +4936,13 @@ function applyPagePermissionsForUser(user) {
                   refreshOnSubmit: false,
                 });
               } else if (act === 'approve' || act === 'reject') {
-                if (!isAdmin) { alert('僅系統管理員可變更狀態'); return; }
+                if (!isAdmin) { alert('權限不足：不可變更狀態'); return; }
                 const newStatus = act === 'approve' ? '核准' : '拒絕';
                 await withRetry(() => fns.setDoc(fns.doc(db, 'leaveRequests', id), { status: newStatus, updatedAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date(networkNowMs()).toISOString() }, { merge: true }));
                 try { rec.status = newStatus; } catch {}
                 renderForMonth(monthInput.value);
               } else if (act === 'edit') {
-                if (!isAdmin) { alert('僅系統管理員可變更狀態'); return; }
+                if (!isAdmin) { alert('權限不足：不可編輯'); return; }
                 openModal({
                   title: '變更狀態',
                   fields: [ { key: 'status', label: '狀態', type: 'select', options: [ { value: '', label: '待核准' }, { value: '核准', label: '核准' }, { value: '拒絕', label: '拒絕' } ] } ],
@@ -4935,7 +5002,8 @@ function applyPagePermissionsForUser(user) {
             const tzNow = nowInTZ('Asia/Taipei');
             const html = `
               <div class="block" id="leader-block-appeals">
-                <div class="block-header"><span class="block-title">申訴列表</span><div class="block-actions"><select id="leaderPointsNameFilter" class="input"><option value="">全部</option></select><input id="leaderPointsDateFilter" type="date" class="input" /></div></div>
+                <div class="block-header"><span class="block-title">${coName || ''}申訴列表</span></div>
+                <div class="block-actions"><select id="leaderPointsNameFilter" class="input"><option value="">全部</option></select><input id="leaderPointsDateFilter" type="date" class="input" /></div>
                 <div class="table-wrapper">
                   <table class="table" aria-label="申訴列表">
                     <thead>
@@ -4988,7 +5056,8 @@ function applyPagePermissionsForUser(user) {
           } catch {}
           const html = `
             <div class="block" id="leader-block-appeals">
-              <div class="block-header"><span class="block-title">申訴列表</span><div class="block-actions"><select id="leaderPointsNameFilter" class="input"></select><input id="leaderPointsDateFilter" type="date" class="input" /></div></div>
+              <div class="block-header"><span class="block-title">${coName || ''}申訴列表</span></div>
+              <div class="block-actions"><select id="leaderPointsNameFilter" class="input"></select><input id="leaderPointsDateFilter" type="date" class="input" /></div>
               <div class="table-wrapper">
                 <table class="table" aria-label="申訴列表">
                   <thead>
@@ -5062,7 +5131,7 @@ function applyPagePermissionsForUser(user) {
                 const points = (a.points != null) ? String(a.points) : '';
                 const text = a.appealText || '';
                 const state = a.state || '';
-                const isAdmin = String(appState.currentUserRole||'') === '系統管理員';
+                const isAdmin = hasFullAccessToTab('leader');
                 const processed = state && state !== '送審';
                 const approveCls = processed ? 'btn btn-grey' : 'btn btn-green';
                 const rejectCls = processed ? 'btn btn-grey' : 'btn btn-darkred';
@@ -5085,11 +5154,11 @@ function applyPagePermissionsForUser(user) {
             const id = btn.dataset.id || '';
             const rec = appeals.find((x) => x.id === id);
             if (!rec) return;
-            const isAdmin = String(appState.currentUserRole||'') === '系統管理員';
+            const isAdmin = hasFullAccessToTab('leader');
             try {
               await ensureFirebase();
               if (act === 'approve' || act === 'reject') {
-                if (!isAdmin) { alert('僅系統管理員可變更狀態'); return; }
+                if (!isAdmin) { alert('權限不足：不可變更狀態'); return; }
                 const newState = act === 'approve' ? '核准' : '拒絕';
                 const payload = { state: newState, updatedAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date(networkNowMs()).toISOString() };
                 if (newState === '核准') payload.points = 0;
@@ -5097,7 +5166,7 @@ function applyPagePermissionsForUser(user) {
                 try { rec.state = newState; if (newState === '核准') rec.points = 0; } catch {}
                 renderAppeals();
               } else if (act === 'edit') {
-                if (!isAdmin) { alert('僅系統管理員可變更狀態'); return; }
+                if (!isAdmin) { alert('權限不足：不可編輯'); return; }
                 openModal({
                   title: '變更審核狀態',
                   fields: [ { key: 'state', label: '審核狀態', type: 'select', options: [ { value: '', label: '待核准' }, { value: '核准', label: '核准' }, { value: '拒絕', label: '拒絕' } ] } ],
@@ -5117,7 +5186,7 @@ function applyPagePermissionsForUser(user) {
                   refreshOnSubmit: false,
                 });
               } else if (act === 'delete') {
-                if (!isAdmin) { alert('僅系統管理員可刪除'); return; }
+                if (!isAdmin) { alert('權限不足：不可刪除'); return; }
                 const ok = await confirmAction({ title: '確認刪除', text: '確定要刪除此計點申訴嗎？', confirmText: '刪除' });
                 if (!ok) return;
                 await withRetry(() => fns.deleteDoc(fns.doc(db, 'pointAppeals', id)));
@@ -5156,6 +5225,9 @@ function applyPagePermissionsForUser(user) {
           const center = { lat: Number(latStr), lng: Number(lngStr) };
           const radius = Number(coObj.radiusMeters || 100);
           const html = `
+            <div class="block" id="leader-block-map">
+              <div class="block-header"><span class="block-title">${coObj?.name || ''}地圖</span></div>
+            </div>
             <div id="leaderMapSplit" style="display:grid; grid-template-rows: 1fr 1fr; height: 60vh; gap: 12px;">
               <div id="leaderMapView" style="width:100%; height:100%; border-radius:12px; overflow:hidden;"></div>
               <div id="leaderStatusView" class="table-wrapper" style="width:100%; height:100%;">
@@ -5259,10 +5331,12 @@ function applyPagePermissionsForUser(user) {
             const when = r.dt instanceof Date ? formatDT(r.dt) : '';
             const place = r.locationName || '';
             const status = r.status || '';
-            const flag = r.inRadius ? '正常' : '異常';
+            const baseSt = String(status).split('-')[0];
+            const stCls = (baseSt === '上班') ? 'work' : (baseSt === '下班') ? 'off' : (baseSt === '外出') ? 'out' : (baseSt === '抵達') ? 'arrive' : (baseSt === '離開') ? 'leave' : (baseSt === '返回') ? 'return' : '';
+            const flagHtml = r.inRadius ? '<span class="status-flag good">正常</span>' : '<span class="status-flag bad">異常</span>';
             const src = photoByUid.get(uid) || r.photoData || '';
             const imgCell = src ? `<img src="${src}" alt="頭像" style="width:36px;height:36px;border-radius:50%;object-fit:cover;"/>` : '';
-            rows.push(`<tr data-uid="${uid}"><td data-col="avatar">${imgCell}</td><td data-col="name">${nm}</td><td>${when}</td><td>${place}</td><td>${status}</td><td>${flag}</td></tr>`);
+            rows.push(`<tr data-uid="${uid}"><td data-col="avatar">${imgCell}</td><td data-col="name">${nm}</td><td>${when}</td><td><span class="status-label ${stCls}">${place}</span></td><td><span class="status-label ${stCls}">${status}</span></td><td>${flagHtml}</td></tr>`);
           });
           tbody.innerHTML = rows.join('') || `<tr><td colspan="6">無資料</td></tr>`;
           tbody.addEventListener('click', (e) => {
@@ -5309,7 +5383,8 @@ function applyPagePermissionsForUser(user) {
             const tzNow = nowInTZ('Asia/Taipei');
             const html = `
               <div class="block" id="leader-block-makeups">
-                <div class="block-header"><span class="block-title">補卡列表</span><div class="block-actions"><select id="leaderMakeupNameFilter" class="input"><option value="">全部</option></select><input id="leaderMakeupDateFilter" type="date" class="input" /></div></div>
+                <div class="block-header"><span class="block-title">${coName || ''}補卡列表</span></div>
+                <div class="block-actions"><select id="leaderMakeupNameFilter" class="input"><option value="">全部</option></select><input id="leaderMakeupDateFilter" type="date" class="input" /></div>
                 <div class="table-wrapper">
                   <table class="table" aria-label="補卡列表">
                     <thead>
@@ -5357,7 +5432,8 @@ function applyPagePermissionsForUser(user) {
           }
           const html = `
             <div class="block" id="leader-block-makeups">
-              <div class="block-header"><span class="block-title">補卡列表</span><div class="block-actions"><select id="leaderMakeupNameFilter" class="input"></select><input id="leaderMakeupDateFilter" type="date" class="input" /></div></div>
+              <div class="block-header"><span class="block-title">${coName || ''}補卡列表</span></div>
+              <div class="block-actions"><select id="leaderMakeupNameFilter" class="input"></select><input id="leaderMakeupDateFilter" type="date" class="input" /></div>
               <div class="table-wrapper">
                 <table class="table" aria-label="補卡列表">
                   <thead>
@@ -5400,7 +5476,7 @@ function applyPagePermissionsForUser(user) {
                 const place = a.place || '';
                 const status = a.status || '';
                 const state = a.state || '送審';
-                const isAdmin = String(appState.currentUserRole||'') === '系統管理員';
+                const isAdmin = hasFullAccessToTab('leader');
                 const processed = state && state !== '送審';
                 const approveCls = processed ? 'btn btn-grey' : 'btn btn-green';
                 const rejectCls = processed ? 'btn btn-grey' : 'btn btn-darkred';
@@ -5423,18 +5499,18 @@ function applyPagePermissionsForUser(user) {
             const id = btn.dataset.id || '';
             const rec = makeups.find((x) => x.id === id);
             if (!rec) return;
-            const isAdmin = String(appState.currentUserRole||'') === '系統管理員';
+            const isAdmin = hasFullAccessToTab('leader');
             try {
               await ensureFirebase();
               if (act === 'approve' || act === 'reject') {
-                if (!isAdmin) { alert('僅系統管理員可變更狀態'); return; }
+                if (!isAdmin) { alert('權限不足：不可變更狀態'); return; }
                 const newState = act === 'approve' ? '核准' : '拒絕';
                 const payload = { state: newState, updatedAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date(networkNowMs()).toISOString() };
                 await withRetry(() => fns.setDoc(fns.doc(db, 'makeupRequests', id), payload, { merge: true }));
                 try { rec.state = newState; } catch {}
                 renderMakeups();
               } else if (act === 'edit') {
-                if (!isAdmin) { alert('僅系統管理員可變更狀態'); return; }
+                if (!isAdmin) { alert('權限不足：不可編輯'); return; }
                 openModal({
                   title: '變更審核狀態',
                   fields: [ { key: 'state', label: '審核狀態', type: 'select', options: [ { value: '', label: '待核准' }, { value: '核准', label: '核准' }, { value: '拒絕', label: '拒絕' } ] } ],
@@ -5453,7 +5529,7 @@ function applyPagePermissionsForUser(user) {
                   refreshOnSubmit: false,
                 });
               } else if (act === 'delete') {
-                if (!isAdmin) { alert('僅系統管理員可刪除'); return; }
+                if (!isAdmin) { alert('權限不足：不可刪除'); return; }
                 const ok = await confirmAction({ title: '確認刪除', text: '確定要刪除此補卡申請嗎？', confirmText: '刪除' });
                 if (!ok) return;
                 await withRetry(() => fns.deleteDoc(fns.doc(db, 'makeupRequests', id)));
@@ -6551,7 +6627,7 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
                   onSubmit: async () => true,
                   afterRender: ({ body }) => {
                     const img = document.createElement('img');
-                    img.src = r.photoData; img.alt = '打卡照片'; img.style.width = '100%'; img.style.borderRadius = '8px'; img.style.aspectRatio = '1'; img.style.objectFit = 'cover';
+                    img.src = r.photoData; img.alt = '打卡照片'; img.style.width = '100%'; img.style.height = 'auto'; img.style.borderRadius = '8px';
                     body.appendChild(img);
                   }
                 });
@@ -6822,9 +6898,8 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
                         img.src = r.attachmentData;
                         img.alt = '目前照片';
                         img.style.width = '100%';
+                        img.style.height = 'auto';
                         img.style.borderRadius = '8px';
-                        img.style.aspectRatio = '1';
-                        img.style.objectFit = 'cover';
                         attachPressInteractions(img);
                         img.addEventListener('click', () => {
                           openModal({
@@ -7312,15 +7387,15 @@ function renderSettingsRules() {
   const tbody = settingsContent.querySelector('#rulesTbody');
   const addBtn = settingsContent.querySelector('#btnAddRule');
   const role = appState.currentUserRole || '一般';
-  const isAdmin = role === '系統管理員';
-  if (!isAdmin) {
+  const canWrite = hasFullAccessToTab('settings');
+  if (!canWrite) {
     try {
       addBtn?.parentElement?.removeChild(addBtn);
       const thOps = table?.querySelector('thead tr th:last-child');
       thOps?.parentElement?.removeChild(thOps);
     } catch {}
   }
-  if (addBtn) {
+  if (addBtn && canWrite) {
     attachPressInteractions(addBtn);
     addBtn.addEventListener('click', () => {
       openModal({
@@ -7377,14 +7452,14 @@ function renderSettingsRules() {
       if (!(t instanceof HTMLElement)) return;
       const act = t.dataset.act || '';
       if (!act) return;
-      if (!isAdmin && act !== 'edit' && act !== 'del') return;
+      if (!canWrite && act !== 'edit' && act !== 'del') return;
       const tr = t.closest('tr');
       const idv = tr?.getAttribute('data-id') || '';
       const idx = appState.pointsRules.findIndex((x) => x.id === idv);
       if (idx < 0) return;
       const r = appState.pointsRules[idx];
     if (act === 'edit') {
-      if (!isAdmin) { alert('權限不足：只有系統管理員可以編輯規則。'); return; }
+      if (!canWrite) { alert('權限不足：不可編輯此分頁內容'); return; }
       openModal({
         title: '編輯計點規則',
         fields: [
@@ -7411,7 +7486,7 @@ function renderSettingsRules() {
         }
       });
     } else if (act === 'del') {
-      if (!isAdmin) { alert('權限不足：只有系統管理員可以刪除規則。'); return; }
+      if (!canWrite) { alert('權限不足：不可刪除此分頁內容'); return; }
       const ok = await confirmAction({ title: '確認刪除', text: '確定要刪除這筆規則嗎？', confirmText: '刪除' });
       if (!ok) return;
       try {
@@ -7526,8 +7601,8 @@ function renderSettingsRoles() {
   const tbody = container.querySelector('#rolesTbody');
   const addBtn = container.querySelector('#btnAddRole');
   const role = appState.currentUserRole || '一般';
-  const isAdmin = role === '系統管理員';
-  if (!isAdmin) { try { addBtn?.parentElement?.removeChild(addBtn); } catch {} }
+  const canWrite = hasFullAccessToTab('settings');
+  if (!canWrite) { try { addBtn?.parentElement?.removeChild(addBtn); } catch {} }
   (async () => {
     await loadRolesFromFirestore();
     const rows = (appState.rolesConfig || []).map((r) => {
@@ -7550,7 +7625,7 @@ function renderSettingsRoles() {
   })();
   addBtn && attachPressInteractions(addBtn);
   addBtn?.addEventListener('click', () => {
-    if (!isAdmin) { alert('權限不足：僅系統管理員可新增角色'); return; }
+    if (!canWrite) { alert('權限不足：不可新增此分頁內容'); return; }
     openModal({
       title: '新增角色',
       fields: [
@@ -7626,7 +7701,7 @@ function renderSettingsRoles() {
         }
       });
     } else if (act === 'del') {
-      if (!isAdmin) { alert('權限不足：僅系統管理員可刪除角色'); return; }
+      if (!canWrite) { alert('權限不足：不可刪除此分頁內容'); return; }
       const ok = await confirmAction({ title: '確認刪除', text: '確定要刪除這個角色嗎？', confirmText: '刪除' });
       if (!ok) return;
       try {
