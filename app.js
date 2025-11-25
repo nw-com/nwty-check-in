@@ -301,6 +301,35 @@ function renderHomeStatusText(str) {
   }
 }
 
+function getTodayRosterStatusForUser(uid) {
+  try {
+    const u = String(uid || appState.currentUserId || '').trim();
+    if (!u) return '';
+    const now = nowInTZ('Asia/Taipei');
+    const ymd = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+    const plans = appState.rosterPlans || {};
+    const plan = (plans[u] || {})[ymd] || null;
+    if (plan && plan.status) return String(plan.status);
+    const wd = now.getDay();
+    const isDefaultHoliday = (wd === 0 || wd === 6 || wd === 5);
+    return isDefaultHoliday ? '休假日' : '上班日';
+  } catch { return ''; }
+}
+
+function renderHomeRosterLabel() {
+  try {
+    const fRow = document.querySelector('.row-f');
+    if (!fRow) return;
+    const status = getTodayRosterStatusForUser(appState.currentUserId);
+    if (!status) { fRow.textContent = ''; fRow.classList.add('hidden'); return; }
+    fRow.classList.remove('hidden');
+    fRow.style.display = 'grid';
+    fRow.style.placeItems = 'end center';
+    const cls = status === '值班日' ? 'arrive' : (status === '休假日' ? 'off' : 'work');
+    fRow.innerHTML = `<div class="status-text" style="text-align:center;"><span class="status-label ${cls}">${status}</span></div>`;
+  } catch {}
+}
+
 // 每 30 秒定位更新（僅首頁且頁籤可見時）
   function startGeoRefresh() {
     stopGeoRefresh();
@@ -318,6 +347,20 @@ function renderHomeStatusText(str) {
   }
 function stopGeoRefresh() {
   if (geoRefreshTimer) { clearInterval(geoRefreshTimer); geoRefreshTimer = null; }
+}
+
+function loadRosterPlansFromStorage() {
+  try {
+    const v = localStorage.getItem('rosterPlans');
+    const obj = v ? JSON.parse(v) : {};
+    if (obj && typeof obj === 'object') appState.rosterPlans = obj;
+  } catch {}
+}
+function saveRosterPlansToStorage() {
+  try {
+    const obj = appState.rosterPlans || {};
+    localStorage.setItem('rosterPlans', JSON.stringify(obj));
+  } catch {}
 }
 var activeMainTab = "home";
 window.addEventListener('load', () => {
@@ -1466,7 +1509,7 @@ function companyStats(companyId) {
     const ids = Array.isArray(a.companyIds) ? a.companyIds : (a.companyId ? [a.companyId] : []);
     return ids.includes(companyId);
   });
-  const leaderRoles = new Set(["系統管理員", "管理層", "高階主管", "初階主管", "行政"]);
+  const leaderRoles = new Set(["高階主管", "初階主管"]);
   const staffRoles = new Set(["總幹事", "秘書", "清潔", "機電", "保全"]);
   const leaderCount = accountsInCompany.filter((a) => leaderRoles.has(a.role)).length;
   const staffCount = accountsInCompany.filter((a) => staffRoles.has(a.role)).length;
@@ -3446,6 +3489,7 @@ let ensureFirebasePromise = null;
         loadRegionsFromFirestore(),
         loadLicensesFromFirestore(),
         loadCommunitiesFromFirestore(),
+        loadPointsRulesFromFirestore(),
       ]);
       // 僅系統管理員載入待審核帳號，避免非管理員被規則擋讀
       if (role === "系統管理員") {
@@ -3493,6 +3537,7 @@ let ensureFirebasePromise = null;
 
   // 請假與補卡
   btnLeaveRequest?.addEventListener('click', () => {
+    let __leaveRefs = null;
               openModal({
                 title: '新增請假',
                 fields: [
@@ -3513,6 +3558,19 @@ let ensureFirebasePromise = null;
       refreshOnSubmit: false,
       onSubmit: async (data) => {
         try {
+          if (__leaveRefs && __leaveRefs.errs) { Object.values(__leaveRefs.errs).forEach((el) => { el.textContent = ''; }); }
+          const typ = String(data.type || '').trim();
+          const sAt = String(data.startAt || '').trim();
+          const eAt = String(data.endAt || '').trim();
+          const rsn = String(data.reason || '').trim();
+          const att = String(data.attachment || window.__leaveAttachmentData || '').trim();
+          let hasErr = false;
+          if (!typ) { hasErr = true; if (__leaveRefs?.errs?.type) __leaveRefs.errs.type.textContent = '請選擇類型'; }
+          if (!sAt) { hasErr = true; if (__leaveRefs?.errs?.startAt) __leaveRefs.errs.startAt.textContent = '請輸入開始'; }
+          if (!eAt) { hasErr = true; if (__leaveRefs?.errs?.endAt) __leaveRefs.errs.endAt.textContent = '請輸入結束'; }
+          if (!rsn) { hasErr = true; if (__leaveRefs?.errs?.reason) __leaveRefs.errs.reason.textContent = '請填寫原因'; }
+          if (!att) { hasErr = true; if (__leaveRefs?.errs?.attachment) __leaveRefs.errs.attachment.textContent = '請上傳照片'; }
+          if (hasErr) return false;
           await ensureFirebase();
           const u = auth?.currentUser || null;
           const payload = {
@@ -3556,8 +3614,17 @@ let ensureFirebasePromise = null;
                 reader.readAsDataURL(f);
               } catch { window.__leaveAttachmentData = ''; }
             });
-            // 移除拍照功能，僅保留檔案上傳
           }
+          const makeErr = (key) => {
+            const input = body.querySelector(`[data-key="${key}"]`);
+            const row = input?.parentElement;
+            if (!row) return null;
+            let el = row.querySelector('.help');
+            if (!el) { el = document.createElement('div'); el.className = 'help'; row.appendChild(el); }
+            if (input) { input.addEventListener('input', () => { el.textContent = ''; }); input.addEventListener('change', () => { el.textContent = ''; }); }
+            return el;
+          };
+          __leaveRefs = { errs: { type: makeErr('type'), startAt: makeErr('startAt'), endAt: makeErr('endAt'), reason: makeErr('reason'), attachment: makeErr('attachment') } };
         } catch {}
       }
     });
@@ -3849,6 +3916,18 @@ let ensureFirebasePromise = null;
     }
   }
 
+  async function loadPointsRulesFromFirestore() {
+    try {
+      await ensureFirebase();
+      if (!db || !fns.collection || !fns.getDocs) return;
+      const ref = fns.collection(db, 'pointsRules');
+      const snap = await withRetry(() => fns.getDocs(ref));
+      const list = [];
+      snap.forEach((doc) => { const d = doc.data() || {}; list.push({ id: doc.id, ...d }); });
+      appState.pointsRules = list;
+    } catch {}
+  }
+
   // 待審核帳號：從 Firestore 載入
   async function loadPendingAccountsFromFirestore() {
     if (!db || !fns.getDocs || !fns.collection) return;
@@ -3963,7 +4042,7 @@ function applyPagePermissionsForUser(user) {
     homeMapOverlay?.classList.toggle("hidden", false);
     // 首頁：A/B/C/D/E 堆疊顯示切換
     homeHeaderStack?.classList.toggle("hidden", tab !== "home");
-    if (tab === "home") { startHomeClock(); } else { stopHomeClock(); }
+    if (tab === "home") { startHomeClock(); renderHomeRosterLabel(); } else { stopHomeClock(); }
     // 所有分頁皆更新定位地圖，僅在頁面可見時執行
     startGeoRefresh();
     if (!same) renderSubTabs(tab);
@@ -3973,35 +4052,46 @@ function applyPagePermissionsForUser(user) {
     const tabs = SUB_TABS[mainTab] || [];
     subTabsEl.innerHTML = "";
     if (!tabs.length) return;
-    if (mainTab === 'leader') {
-      const sel = document.createElement('select');
-      sel.className = 'subtab-select';
-      sel.id = 'leaderCompanySelect';
-      const companies = Array.isArray(appState.companies) ? appState.companies : [];
-      const me = appState.accounts.find((a) => a.id === appState.currentUserId) || null;
-      const meCompanyIds = Array.isArray(me?.companyIds) ? me.companyIds : (me?.companyId ? [me.companyId] : []);
-      const onlyOne = meCompanyIds.length === 1 ? meCompanyIds[0] : null;
-      if (companies.length) {
-        companies.forEach((co) => {
-          const opt = document.createElement('option');
-          opt.value = co.id;
-          opt.textContent = co.name || co.id;
-          sel.appendChild(opt);
-        });
+  if (mainTab === 'leader') {
+    const sel = document.createElement('select');
+    sel.className = 'subtab-select';
+    sel.id = 'leaderCompanySelect';
+    const companies = Array.isArray(appState.companies) ? appState.companies : [];
+    const me = appState.accounts.find((a) => a.id === appState.currentUserId) || null;
+    const meCompanyIds = Array.isArray(me?.companyIds) ? me.companyIds : (me?.companyId ? [me.companyId] : []);
+    const onlyOneRaw = meCompanyIds.length === 1 ? meCompanyIds[0] : null;
+    if (companies.length) {
+      companies.forEach((co) => {
+        const opt = document.createElement('option');
+        opt.value = co.id;
+        opt.textContent = co.name || co.id;
+        sel.appendChild(opt);
+      });
+    }
+    if (onlyOneRaw) {
+      let onlyOne = onlyOneRaw;
+      if (!companies.some((c) => String(c.id||'') === String(onlyOne))) {
+        const byName = companies.find((c) => String(c.name||'') === String(onlyOne));
+        if (byName) onlyOne = byName.id;
       }
-      if (onlyOne) {
-        appState.leaderCompanyFilter = onlyOne;
-        sel.value = onlyOne;
-        sel.disabled = true;
-      } else if (appState.leaderCompanyFilter) {
-        sel.value = appState.leaderCompanyFilter;
-      } else {
-        const firstOpt = sel.options && sel.options.length ? sel.options[0].value : null;
-        if (firstOpt) {
-          appState.leaderCompanyFilter = firstOpt;
-          sel.value = firstOpt;
-        }
+      appState.leaderCompanyFilter = onlyOne;
+      sel.value = onlyOne;
+      sel.disabled = true;
+    } else if (appState.leaderCompanyFilter) {
+      let v = appState.leaderCompanyFilter;
+      if (!companies.some((c) => String(c.id||'') === String(v))) {
+        const byName = companies.find((c) => String(c.name||'') === String(v));
+        if (byName) v = byName.id;
+        appState.leaderCompanyFilter = v;
       }
+      sel.value = v;
+    } else {
+      const firstOpt = sel.options && sel.options.length ? sel.options[0].value : null;
+      if (firstOpt) {
+        appState.leaderCompanyFilter = firstOpt;
+        sel.value = firstOpt;
+      }
+    }
       sel.addEventListener('change', () => {
         appState.leaderCompanyFilter = sel.value || null;
         setActiveSubTab(activeSubTab);
@@ -4059,6 +4149,7 @@ function applyPagePermissionsForUser(user) {
     if (!container) return;
     container.innerHTML = "";
     if (label === "班表") {
+      try { loadRosterPlansFromStorage(); } catch {}
       const html = `
         <div class="roster-layout" role="region" aria-label="班表">
           <div class="roster-row roster-add">
@@ -4130,7 +4221,8 @@ function applyPagePermissionsForUser(user) {
       // 未指派值班時，週五視為休假日
       function isDefaultHoliday(d) { const wd = d.getDay(); return wd === 0 || wd === 6 || wd === 5; }
       function ymd(date) { return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`; }
-      const rosterPlans = {}; // officerId -> { ymd -> { startTime, endTime, status } }
+      appState.rosterPlans = appState.rosterPlans || {};
+      const rosterPlans = appState.rosterPlans; // officerId -> { ymd -> { startTime, endTime, status } }
       function updateRoster(date) {
         if (rosterDateEl) rosterDateEl.textContent = `日期：${ymd(date)}`;
         if (!rosterListBody) return;
@@ -4163,6 +4255,10 @@ function applyPagePermissionsForUser(user) {
               rosterPlans[officerId] = rosterPlans[officerId] || {};
               rosterPlans[officerId][key] = { startTime: data.startTime, endTime: data.endTime, status: data.status };
               updateRoster(date);
+              try { saveRosterPlansToStorage(); } catch {}
+              try { renderHomeRosterLabel(); } catch {}
+              try { document.querySelectorAll('.modal').forEach((m) => m.remove()); } catch {}
+              try { if (modalRoot) { modalRoot.classList.add('hidden'); modalRoot.innerHTML = ''; } } catch {}
               return true;
             },
           });
@@ -4175,6 +4271,8 @@ function applyPagePermissionsForUser(user) {
           rosterPlans[officerId] = rosterPlans[officerId] || {};
           rosterPlans[officerId][key] = { startTime: "", endTime: "", status: "休假日" };
           updateRoster(date);
+          try { saveRosterPlansToStorage(); } catch {}
+          try { renderHomeRosterLabel(); } catch {}
         });
         rosterListBody.appendChild(tr);
       }
@@ -4213,6 +4311,10 @@ function applyPagePermissionsForUser(user) {
               updateRoster(currentDate);
               // 通知月曆重新渲染，顯示值班徽章
               document.getElementById("rosterCalendar")?.dispatchEvent(new Event("rosterPlansChanged"));
+              try { saveRosterPlansToStorage(); } catch {}
+              try { renderHomeRosterLabel(); } catch {}
+              try { document.querySelectorAll('.modal').forEach((m) => m.remove()); } catch {}
+              try { if (modalRoot) { modalRoot.classList.add('hidden'); modalRoot.innerHTML = ''; } } catch {}
               return true;
             },
             afterRender: ({ body }) => {
@@ -4340,6 +4442,57 @@ function applyPagePermissionsForUser(user) {
           for (let i = 0; i < cells.length; i += 7) rows.push(cells.slice(i, i + 7));
           const today = nowInTZ('Asia/Taipei');
           const isSameMonth = today.getFullYear() === date.getFullYear() && today.getMonth() === date.getMonth();
+          const officerId = sel?.value || "";
+          const y = date.getFullYear();
+          const m = date.getMonth();
+          async function ensureMonthlyCheckinsFor(uid, y, m) {
+            try {
+              await ensureFirebase();
+              const start = new Date(y, m, 1);
+              const end = new Date(y, m + 1, 1);
+              appState.rosterMonthCheckins = appState.rosterMonthCheckins || {};
+              const key = `${y}-${m+1}`;
+              const exists = appState.rosterMonthCheckins[uid] && appState.rosterMonthCheckins[uid][key];
+              if (exists) return;
+              const ref = fns.collection(db, 'checkins');
+              const q = fns.query(ref, fns.where('uid','==', uid));
+              const snap = await withRetry(() => fns.getDocs(q));
+              const dayMap = {};
+              snap.forEach((doc) => {
+                const data = doc.data() || {};
+                let created = data.createdAt;
+                let dt = null;
+                if (created && typeof created.toDate === 'function') dt = created.toDate(); else if (typeof created === 'string') dt = new Date(created);
+                if (!(dt instanceof Date) || isNaN(dt)) return;
+                if (dt.getFullYear() !== y || dt.getMonth() !== m) return;
+                const dkey = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+                const baseStatus = String(data.status||'').split('-')[0];
+                const rec = dayMap[dkey] || { hasStart: false, hasEnd: false };
+                if (baseStatus === '上班') rec.hasStart = true; else if (baseStatus === '下班') rec.hasEnd = true;
+                dayMap[dkey] = rec;
+              });
+              appState.rosterMonthCheckins[uid] = appState.rosterMonthCheckins[uid] || {};
+              appState.rosterMonthCheckins[uid][key] = dayMap;
+            } catch {}
+          }
+          function getDayClasses(dayStr) {
+            if (!dayStr) return { cellCls: "", btnCls: "" };
+            const k = `${y}-${String(m+1).padStart(2,'0')}-${String(dayStr).padStart(2,'0')}`;
+            const plan = (rosterPlans[officerId] || {})[k];
+            const base = plan?.status || (new Date(y,m,Number(dayStr)).getDay() === 5 || new Date(y,m,Number(dayStr)).getDay() === 0 || new Date(y,m,Number(dayStr)).getDay() === 6 ? '休假日' : '上班日');
+            const baseCls = base === '值班日' ? 'status-duty' : (base === '休假日' ? 'status-off' : 'status-work');
+            const key = `${y}-${m+1}`;
+            const map = appState.rosterMonthCheckins?.[officerId]?.[key] || {};
+            const rec = map[k] || null;
+            const doneCls = rec ? ((rec.hasStart && rec.hasEnd) ? 'done' : 'undone') : '';
+            const btnCls = ['roster-cal-day', baseCls, doneCls].filter(Boolean).join(' ');
+            return { btnCls };
+          }
+          try {
+            if (officerId) {
+              ensureMonthlyCheckinsFor(officerId, y, m).then(() => { try { renderMonth(date); } catch {} });
+            }
+          } catch {}
           const headerHtml = `
             <div class="roster-cal-header" role="group" aria-label="月曆導航">
               <button id="rosterPrevMonth" class="btn" aria-label="上一月">◀</button>
@@ -4354,11 +4507,10 @@ function applyPagePermissionsForUser(user) {
                   const isToday = isSameMonth && String(today.getDate()) === c;
                   const cellCls = ["roster-cal-cell", c ? "" : "empty", isToday ? "today" : ""].filter(Boolean).join(" ");
                   if (!c) return `<td class="${cellCls}"></td>`;
-                  const officerId = sel?.value || "";
+                  const { btnCls } = getDayClasses(c);
                   const k = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(c).padStart(2,'0')}`;
-                  const plan = (rosterPlans[officerId] || {})[k];
-                  const dutyBadge = plan?.status === "值班日" ? '<span class="roster-cal-duty">值班</span>' : '';
-                  return `<td class="${cellCls}"><button type="button" class="roster-cal-day" data-day="${c}">${c}</button>${dutyBadge}</td>`;
+                  // 不顯示值班小標籤，僅以底色區分
+                  return `<td class="${cellCls}"><button type="button" class="${btnCls}" data-day="${c}">${c}</button></td>`;
                 }).join("")}</tr>`).join("")}
               </tbody>
             </table>`;
@@ -4410,7 +4562,7 @@ function applyPagePermissionsForUser(user) {
           const accounts = Array.isArray(appState.accounts) ? appState.accounts : [];
           if (!coId) { container.textContent = "請先選擇公司"; return; }
           const companies = Array.isArray(appState.companies) ? appState.companies : [];
-          const coObj = companies.find((c) => String(c.id||'') === String(coId)) || null;
+          const coObj = companies.find((c) => String(c.id||'') === String(coId) || String(c.name||'') === String(coId)) || null;
           const coName = coObj?.name || null;
           const targets = accounts.filter((a) => {
             const ids0 = Array.isArray(a.companyIds) ? a.companyIds : (a.companyId ? [a.companyId] : []);
@@ -4548,7 +4700,7 @@ function applyPagePermissionsForUser(user) {
           const accounts = Array.isArray(appState.accounts) ? appState.accounts : [];
           if (!coId) { container.textContent = "請先選擇公司"; return; }
           const companies = Array.isArray(appState.companies) ? appState.companies : [];
-          const coObj = companies.find((c) => String(c.id||'') === String(coId)) || null;
+          const coObj = companies.find((c) => String(c.id||'') === String(coId) || String(c.name||'') === String(coId)) || null;
           const coName = coObj?.name || null;
           const targets = accounts.filter((a) => {
             const ids0 = Array.isArray(a.companyIds) ? a.companyIds : (a.companyId ? [a.companyId] : []);
@@ -4768,7 +4920,7 @@ function applyPagePermissionsForUser(user) {
           const accounts = Array.isArray(appState.accounts) ? appState.accounts : [];
           if (!coId) { container.textContent = "請先選擇公司"; return; }
           const companies = Array.isArray(appState.companies) ? appState.companies : [];
-          const coObj = companies.find((c) => String(c.id||'') === String(coId)) || null;
+          const coObj = companies.find((c) => String(c.id||'') === String(coId) || String(c.name||'') === String(coId)) || null;
           const coName = coObj?.name || null;
           const targets = accounts.filter((a) => {
             const ids0 = Array.isArray(a.companyIds) ? a.companyIds : (a.companyId ? [a.companyId] : []);
@@ -4990,7 +5142,7 @@ function applyPagePermissionsForUser(user) {
           const accounts = Array.isArray(appState.accounts) ? appState.accounts : [];
           if (!coId) { container.textContent = "請先選擇公司"; return; }
           const companies = Array.isArray(appState.companies) ? appState.companies : [];
-          const coObj = companies.find((c) => String(c.id||'') === String(coId)) || null;
+          const coObj = companies.find((c) => String(c.id||'') === String(coId) || String(c.name||'') === String(coId)) || null;
           if (!coObj || !coObj.coords) { container.textContent = "公司未設定座標"; return; }
           const allowedRoles = ["系統管理員","管理層","高階主管","初階主管","行政"];
           const targets = accounts.filter((a) => {
@@ -5010,6 +5162,7 @@ function applyPagePermissionsForUser(user) {
                 <table class="table" aria-label="幹部狀態">
                   <thead>
                     <tr>
+                      <th>大頭照</th>
                       <th>姓名</th>
                       <th>時間</th>
                       <th>地點</th>
@@ -5017,7 +5170,7 @@ function applyPagePermissionsForUser(user) {
                       <th>範圍</th>
                     </tr>
                   </thead>
-                  <tbody id="leaderStatusTbody"><tr><td colspan="5">載入中...</td></tr></tbody>
+                  <tbody id="leaderStatusTbody"><tr><td colspan="6">載入中...</td></tr></tbody>
                 </table>
               </div>
             </div>`;
@@ -5057,6 +5210,7 @@ function applyPagePermissionsForUser(user) {
             if (!prev || (prev.dt < dt)) lastByUid.set(uid, { ...r, dt });
           });
           const markers = [];
+          const markerByUid = new Map();
           const size = 36;
           for (const [uid, r] of Array.from(lastByUid.entries())) {
             const nm = nameByUid.get(uid) || r.name || '使用者';
@@ -5064,7 +5218,7 @@ function applyPagePermissionsForUser(user) {
             if (typeof lat === 'number' && typeof lng === 'number') {
               const pos = { lat, lng };
               const color = r.inRadius ? '#22c55e' : '#ef4444';
-              const src = r.photoData || photoByUid.get(uid) || '';
+              const src = photoByUid.get(uid) || r.photoData || '';
               let url = null;
               try {
                 const canvas = document.createElement('canvas');
@@ -5082,6 +5236,7 @@ function applyPagePermissionsForUser(user) {
               const icon = url ? { url, scaledSize: new maps.Size(size, size), anchor: new maps.Point(size/2, size/2) } : { path: maps.SymbolPath.CIRCLE, scale: 6, fillColor: color, fillOpacity: 1, strokeColor: '#ffffff', strokeWeight: 1 };
               const marker = new maps.Marker({ position: pos, map, title: nm, icon });
               markers.push(marker);
+              markerByUid.set(uid, marker);
             }
           }
           try {
@@ -5105,9 +5260,26 @@ function applyPagePermissionsForUser(user) {
             const place = r.locationName || '';
             const status = r.status || '';
             const flag = r.inRadius ? '正常' : '異常';
-            rows.push(`<tr><td>${nm}</td><td>${when}</td><td>${place}</td><td>${status}</td><td>${flag}</td></tr>`);
+            const src = photoByUid.get(uid) || r.photoData || '';
+            const imgCell = src ? `<img src="${src}" alt="頭像" style="width:36px;height:36px;border-radius:50%;object-fit:cover;"/>` : '';
+            rows.push(`<tr data-uid="${uid}"><td data-col="avatar">${imgCell}</td><td data-col="name">${nm}</td><td>${when}</td><td>${place}</td><td>${status}</td><td>${flag}</td></tr>`);
           });
-          tbody.innerHTML = rows.join('') || `<tr><td colspan="5">無資料</td></tr>`;
+          tbody.innerHTML = rows.join('') || `<tr><td colspan="6">無資料</td></tr>`;
+          tbody.addEventListener('click', (e) => {
+            const td = e.target.closest('td');
+            if (!td) return;
+            const col = td.dataset.col || '';
+            if (col !== 'avatar' && col !== 'name') return;
+            const tr = td.closest('tr');
+            const uid = tr && tr.dataset.uid;
+            if (!uid) return;
+            const r = lastByUid.get(uid);
+            if (!r || typeof r.lat !== 'number' || typeof r.lng !== 'number') return;
+            const pos = { lat: r.lat, lng: r.lng };
+            try { map.panTo(pos); const z = map.getZoom(); if (typeof z === 'number') map.setZoom(Math.max(16, z)); else map.setZoom(16); } catch {}
+            const m = markerByUid.get(uid);
+            try { if (m && maps.Animation) { m.setAnimation(maps.Animation.BOUNCE); setTimeout(() => { try { m.setAnimation(null); } catch {} }, 1200); } } catch {}
+          });
         } catch (e) {
           const msg = e?.message || e; container.textContent = typeof msg === 'string' ? `載入失敗：${msg}` : "載入失敗";
         }
@@ -5122,7 +5294,7 @@ function applyPagePermissionsForUser(user) {
           const accounts = Array.isArray(appState.accounts) ? appState.accounts : [];
           if (!coId) { container.textContent = "請先選擇公司"; return; }
           const companies = Array.isArray(appState.companies) ? appState.companies : [];
-          const coObj = companies.find((c) => String(c.id||'') === String(coId)) || null;
+          const coObj = companies.find((c) => String(c.id||'') === String(coId) || String(c.name||'') === String(coId)) || null;
           const coName = coObj?.name || null;
           const targets = accounts.filter((a) => {
             const ids0 = Array.isArray(a.companyIds) ? a.companyIds : (a.companyId ? [a.companyId] : []);

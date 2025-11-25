@@ -480,6 +480,15 @@ body.status-leave-request { --hero-pulse-rgb: 245,124,0; }
 .roster-cal-day:hover { background: #f3f4f6; }
 .roster-cal-day-disabled { border: none; }
 
+/* 班表狀態底色（未判定完成度時） */
+.roster-cal-day.status-work { background: #e8f1ff; color: #0f172a; }
+.roster-cal-day.status-duty { background: #fff3a5; color: #6b4e00; }
+.roster-cal-day.status-off { background: #eeeeee; color: #9ca3af; }
+
+/* 完成度覆蓋（已完成=綠、未完成=紅） */
+.roster-cal-day.done { background: #e6f4ea !important; color: #0b8043; }
+.roster-cal-day.undone { background: #ffe4e6 !important; color: #b00020; }
+
 /* 其他狀態（選取、假日、值班徽章等，視資料有無） */
 .roster-cal-cell.selected .roster-cal-day { outline: 2px solid #fca5a5; }
 
