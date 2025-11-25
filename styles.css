@@ -86,12 +86,12 @@ body {
 
 .app-subheader {
   position: fixed; top: 8vh; left: 0; right: 0; height: 6vh; min-height: 44px;
-  display: flex; align-items: center; padding: 0 14px; background: #EEEEEE; border-bottom: 1px solid #e5e7eb; z-index: 900;
+  display: flex; align-items: center; padding: 0 10px; background: #EEEEEE; border-bottom: 1px solid #e5e7eb; z-index: 900;
 }
 .subheader-text { font-size: 14px; color: #111827; }
 
 /* 子分頁（頁中上） */
-.subheader-tabs { display: flex; align-items: center; gap: 8px; overflow-x: auto; }
+.subheader-tabs { display: flex; align-items: center; gap: 8px; overflow-x: auto; width: 100%; }
 .subtab-btn { background: transparent; border: none; color: #374151; font-size: 14px; padding: 6px 10px; border-radius: 999px; position: relative; }
 .subtab-btn.active { color: #FF0000; }
 /* 子分頁游標與 hover/active/pressed 效果 */

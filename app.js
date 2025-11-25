@@ -123,17 +123,16 @@ async function initNetworkTime() {
   if (navigator.onLine === false) { appState.networkTimeOk = false; appState.timeOffsetMs = 0; return; }
   let ok = false;
   try {
-    const c2 = new AbortController();
-    const t2 = setTimeout(() => { try { c2.abort(); } catch {} }, 5000);
-    let res2;
-    try {
-      res2 = await fetch('https://timeapi.io/api/Time/current/zone?timeZone=Asia/Taipei', { cache: 'no-store', signal: c2.signal });
-    } finally { clearTimeout(t2); }
-    if (!res2.ok) throw new Error('time api');
-    const j2 = await res2.json();
-    const netStr = `${j2.date}T${j2.time}+08:00`;
-    const netUtc2 = Date.parse(netStr);
-    if (!isNaN(netUtc2)) { appState.timeOffsetMs = netUtc2 - Date.now(); ok = true; }
+    const res = await Promise.race([
+      fetch('https://timeapi.io/api/Time/current/zone?timeZone=Asia/Taipei', { cache: 'no-store' }),
+      new Promise((resolve) => setTimeout(() => resolve(null), 5000)),
+    ]);
+    if (res && res.ok) {
+      const j = await res.json();
+      const netStr = `${j.date}T${j.time}+08:00`;
+      const netUtc = Date.parse(netStr);
+      if (!isNaN(netUtc)) { appState.timeOffsetMs = netUtc - Date.now(); ok = true; }
+    }
   } catch {}
   appState.networkTimeOk = !!ok;
   if (!ok) { appState.timeOffsetMs = 0; }
@@ -267,7 +266,7 @@ function renderHomeStatusText(str) {
     const flag = parts.pop();
     const status = parts.pop();
     const before = parts.join(" ");
-    const flagCls = flag === "異常" ? "bad" : (flag === "正常" ? "good" : "");
+    const flagCls = (() => { const f = String(flag||''); return f.startsWith('異常') ? 'bad' : (f === '正常' ? 'good' : ''); })();
     const baseStatus = String(status).split('-')[0];
     const statusCls = (() => {
       switch (baseStatus) {
@@ -285,7 +284,18 @@ function renderHomeStatusText(str) {
     const locText = m ? (m[2] || "") : "";
     const nameText = (homeHeaderNameEl?.textContent || '').replace(/^歡迎~\s*/, '') || '';
     el.style.textAlign = "center";
-    el.innerHTML = `<div>${dateText}</div><div>${nameText ? `${nameText} ` : ''}${locText ? `<span class="status-label ${statusCls}">${locText}</span> ` : ""}<span class="status-label ${statusCls}">${status}</span> <span class="status-flag ${flagCls}">${flag}</span></div>`;
+    const reasonPart = (() => { const s1 = String(status||''); const i = s1.indexOf('-'); return i >= 0 ? s1.slice(i+1) : ''; })();
+    const flagText = (() => {
+      if ((baseStatus === '外出' || baseStatus === '抵達' || baseStatus === '離開') && reasonPart) {
+        const rules = Array.isArray(appState.pointsRules) ? appState.pointsRules : [];
+        const r = rules.find((x) => String(x.reason||'') === String(reasonPart));
+        const abnormal = r && String(r.status||'') === '異常';
+        return abnormal ? `異常-${reasonPart}` : '正常';
+      }
+      return flag;
+    })();
+    const flagCls2 = (() => { const f = String(flagText||''); return f.startsWith('異常') ? 'bad' : (f === '正常' ? 'good' : ''); })();
+    el.innerHTML = `<div>${dateText}</div><div>${nameText ? `${nameText} ` : ''}${locText ? `<span class="status-label ${statusCls}">${locText}</span> ` : ""}<span class="status-label ${statusCls}">${status}</span> <span class="status-flag ${flagCls2}">${flagText}</span></div>`;
   } else {
     el.textContent = s;
   }
@@ -690,7 +700,7 @@ async function withRetry(fn, times = 3, delay = 500) {
     try { return await fn(); } catch (e) {
       lastErr = e;
       const s = String(e && e.message ? e.message : e);
-      if (i < times - 1 && (s.includes('ERR_ABORTED') || s.includes('AbortError') || s.includes('NetworkError'))) {
+      if (i < times - 1 && (s.includes('ERR_ABORTED') || s.includes('AbortError') || s.includes('NetworkError') || s.includes('Timeout'))) {
         await new Promise((r) => setTimeout(r, delay * Math.pow(2, i)));
         continue;
       }
@@ -936,14 +946,18 @@ async function fetchLastCheckinViaRest(uid) {
         limit: 1,
       },
     };
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify(body),
-    });
+    const res = await withRetry(() => Promise.race([
+      fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(body),
+      }),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 7000)),
+    ]));
+    if (!res || !res.ok) return null;
     const arr = await res.json().catch(() => []);
     if (!Array.isArray(arr) || !arr.length) return null;
     const doc = arr.find((x) => x && x.document && x.document.fields)?.document;
@@ -4489,7 +4503,19 @@ function applyPagePermissionsForUser(user) {
                 }
               })();
               const place = r.locationName || '未知地點';
-              const flagHtml = r.inRadius === true ? ' <span class="status-flag good">正常</span>' : ' <span class="status-flag bad">異常</span>';
+              const flagHtml = (() => {
+                const st = String(r.status||'');
+                const baseSt = st.split('-')[0];
+                const i = st.indexOf('-');
+                const reason = i >= 0 ? st.slice(i+1) : '';
+                if ((baseSt === '外出' || baseSt === '抵達' || baseSt === '離開') && reason) {
+                  const rules = Array.isArray(appState.pointsRules) ? appState.pointsRules : [];
+                  const match = rules.find((x) => String(x.reason||'') === String(reason));
+                  const abnormal = match && String(match.status||'') === '異常';
+                  return abnormal ? ` <span class="status-flag bad">異常-${reason}</span>` : ' <span class="status-flag good">正常</span>';
+                }
+                return r.inRadius === true ? ' <span class="status-flag good">正常</span>' : ' <span class="status-flag bad">異常</span>';
+              })();
               const stDisplay = (() => {
                 const reason = r.reason || '';
                 if ((baseSt === '外出' || baseSt === '抵達' || baseSt === '離開') && reason) return `${baseSt}-${reason}`;
@@ -4842,6 +4868,12 @@ function applyPagePermissionsForUser(user) {
             const id1 = String(a.id||''); if (id1) nameByUid.set(id1, nm);
             const id2 = String(a.uid||''); if (id2) nameByUid.set(id2, nm);
           });
+          const photoByUid = new Map();
+          targets.forEach((a) => {
+            const p = a.photoUrl || '';
+            const id1 = String(a.id||''); if (id1) photoByUid.set(id1, p);
+            const id2 = String(a.uid||''); if (id2) photoByUid.set(id2, p);
+          });
           const appeals = [];
           const aref = fns.collection(db, 'pointAppeals');
           const chunks2 = []; for (let i = 0; i < uids.length; i += 10) chunks2.push(uids.slice(i, i + 10));
@@ -4939,6 +4971,322 @@ function applyPagePermissionsForUser(user) {
                 await withRetry(() => fns.deleteDoc(fns.doc(db, 'pointAppeals', id)));
                 try { const i = appeals.findIndex((x) => x.id === id); if (i >= 0) appeals.splice(i, 1); } catch {}
                 renderAppeals();
+              }
+            } catch (err) { alert(`操作失敗：${err?.message || err}`); }
+          });
+        } catch (e) {
+          const msg = e?.message || e;
+          container.textContent = typeof msg === 'string' ? `載入失敗：${msg}` : "載入失敗";
+        }
+      })();
+      return;
+    }
+    if (label === "地圖") {
+      (async () => {
+        try {
+          await ensureFirebase();
+          const maps = await ensureGoogleMaps();
+          const coId = appState.leaderCompanyFilter || null;
+          const accounts = Array.isArray(appState.accounts) ? appState.accounts : [];
+          if (!coId) { container.textContent = "請先選擇公司"; return; }
+          const companies = Array.isArray(appState.companies) ? appState.companies : [];
+          const coObj = companies.find((c) => String(c.id||'') === String(coId)) || null;
+          if (!coObj || !coObj.coords) { container.textContent = "公司未設定座標"; return; }
+          const allowedRoles = ["系統管理員","管理層","高階主管","初階主管","行政"];
+          const targets = accounts.filter((a) => {
+            const ids0 = Array.isArray(a.companyIds) ? a.companyIds : (a.companyId ? [a.companyId] : []);
+            const ids = ids0.map((x) => String(x||'').trim());
+            const idOk = ids.includes(String(coId)) || ids.includes(String(coObj.name||''));
+            const roleOk = allowedRoles.includes(String(a.role||""));
+            return roleOk && idOk;
+          });
+          const [latStr, lngStr] = String(coObj.coords).split(',').map((s)=>s.trim());
+          const center = { lat: Number(latStr), lng: Number(lngStr) };
+          const radius = Number(coObj.radiusMeters || 100);
+          const html = `
+            <div id="leaderMapSplit" style="display:grid; grid-template-rows: 1fr 1fr; height: 60vh; gap: 12px;">
+              <div id="leaderMapView" style="width:100%; height:100%; border-radius:12px; overflow:hidden;"></div>
+              <div id="leaderStatusView" class="table-wrapper" style="width:100%; height:100%;">
+                <table class="table" aria-label="幹部狀態">
+                  <thead>
+                    <tr>
+                      <th>姓名</th>
+                      <th>時間</th>
+                      <th>地點</th>
+                      <th>狀態</th>
+                      <th>範圍</th>
+                    </tr>
+                  </thead>
+                  <tbody id="leaderStatusTbody"><tr><td colspan="5">載入中...</td></tr></tbody>
+                </table>
+              </div>
+            </div>`;
+          container.innerHTML = html;
+          const mapRoot = document.getElementById('leaderMapView');
+          const tbody = document.getElementById('leaderStatusTbody');
+          const map = new maps.Map(mapRoot, { center, zoom: 15, mapTypeId: 'roadmap', disableDefaultUI: true });
+          const circle = new maps.Circle({ center, radius, strokeColor: '#ff0000', strokeOpacity: 0.8, strokeWeight: 2, fillColor: '#ff0000', fillOpacity: 0.1, map });
+          const nameByUid = new Map();
+          targets.forEach((a) => {
+            const nm = a.name || a.email || '使用者';
+            const id1 = String(a.id||''); if (id1) nameByUid.set(id1, nm);
+            const id2 = String(a.uid||''); if (id2) nameByUid.set(id2, nm);
+          });
+          const photoByUid = new Map();
+          targets.forEach((a) => {
+            const p = a.photoUrl || '';
+            const id1 = String(a.id||''); if (id1) photoByUid.set(id1, p);
+            const id2 = String(a.uid||''); if (id2) photoByUid.set(id2, p);
+          });
+          const uids = targets.map((a) => a.uid || a.id).filter(Boolean).map(String);
+          const ref = fns.collection(db, 'checkins');
+          const chunks = []; for (let i = 0; i < uids.length; i += 10) chunks.push(uids.slice(i, i + 10));
+          const all = [];
+          for (const ch of chunks) {
+            const q = fns.query(ref, fns.where('uid', 'in', ch));
+            const snap = await withRetry(() => fns.getDocs(q));
+            snap.forEach((doc) => { const d = doc.data() || {}; all.push({ id: doc.id, ...d }); });
+          }
+          const lastByUid = new Map();
+          all.forEach((r) => {
+            let created = r.createdAt; let dt = null;
+            if (created && typeof created.toDate === 'function') dt = created.toDate(); else if (typeof created === 'string') dt = new Date(created);
+            if (!(dt instanceof Date) || isNaN(dt)) return;
+            const uid = String(r.uid||''); if (!uid) return;
+            const prev = lastByUid.get(uid);
+            if (!prev || (prev.dt < dt)) lastByUid.set(uid, { ...r, dt });
+          });
+          const markers = [];
+          const size = 36;
+          for (const [uid, r] of Array.from(lastByUid.entries())) {
+            const nm = nameByUid.get(uid) || r.name || '使用者';
+            const lat = r.lat, lng = r.lng;
+            if (typeof lat === 'number' && typeof lng === 'number') {
+              const pos = { lat, lng };
+              const color = r.inRadius ? '#22c55e' : '#ef4444';
+              const src = r.photoData || photoByUid.get(uid) || '';
+              let url = null;
+              try {
+                const canvas = document.createElement('canvas');
+                canvas.width = size; canvas.height = size;
+                const ctx = canvas.getContext('2d');
+                const img = new Image();
+                if (src) { img.crossOrigin = 'anonymous'; img.src = src; await new Promise((res) => { img.onload = res; img.onerror = res; }); }
+                ctx.save();
+                ctx.beginPath(); ctx.arc(size/2, size/2, (size/2)-2, 0, Math.PI*2); ctx.closePath(); ctx.clip();
+                if (src && img.width && img.height) { ctx.drawImage(img, 0, 0, size, size); } else { ctx.fillStyle = '#9CA3AF'; ctx.fillRect(0, 0, size, size); ctx.fillStyle = '#ffffff'; ctx.font = 'bold 16px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; const initial = String(nm||'').trim().charAt(0) || '用'; ctx.fillText(initial, size/2, size/2); }
+                ctx.restore();
+                ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(size/2, size/2, (size/2)-1.5, 0, Math.PI*2); ctx.stroke();
+                url = canvas.toDataURL();
+              } catch {}
+              const icon = url ? { url, scaledSize: new maps.Size(size, size), anchor: new maps.Point(size/2, size/2) } : { path: maps.SymbolPath.CIRCLE, scale: 6, fillColor: color, fillOpacity: 1, strokeColor: '#ffffff', strokeWeight: 1 };
+              const marker = new maps.Marker({ position: pos, map, title: nm, icon });
+              markers.push(marker);
+            }
+          }
+          try {
+            const vw = mapRoot && (mapRoot.clientWidth || mapRoot.offsetWidth) || 600;
+            const vh = mapRoot && (mapRoot.clientHeight || mapRoot.offsetHeight) || 300;
+            const minDim = Math.max(1, Math.min(vw, vh));
+            const targetPx = minDim * 0.4;
+            const latRad = (center.lat || 0) * Math.PI / 180;
+            const metersPerPixel = (2 * radius) / targetPx;
+            const zoom = Math.log2((156543.03392 * Math.cos(latRad)) / metersPerPixel);
+            const z = Math.max(0, Math.min(30, zoom));
+            map.setCenter(center);
+            map.setOptions({ maxZoom: 30 });
+            map.setZoom(z);
+          } catch {}
+          const formatDT = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+          const rows = [];
+          lastByUid.forEach((r, uid) => {
+            const nm = nameByUid.get(uid) || r.name || '使用者';
+            const when = r.dt instanceof Date ? formatDT(r.dt) : '';
+            const place = r.locationName || '';
+            const status = r.status || '';
+            const flag = r.inRadius ? '正常' : '異常';
+            rows.push(`<tr><td>${nm}</td><td>${when}</td><td>${place}</td><td>${status}</td><td>${flag}</td></tr>`);
+          });
+          tbody.innerHTML = rows.join('') || `<tr><td colspan="5">無資料</td></tr>`;
+        } catch (e) {
+          const msg = e?.message || e; container.textContent = typeof msg === 'string' ? `載入失敗：${msg}` : "載入失敗";
+        }
+      })();
+      return;
+    }
+    if (label === "補卡") {
+      (async () => {
+        try {
+          await ensureFirebase();
+          const coId = appState.leaderCompanyFilter || null;
+          const accounts = Array.isArray(appState.accounts) ? appState.accounts : [];
+          if (!coId) { container.textContent = "請先選擇公司"; return; }
+          const companies = Array.isArray(appState.companies) ? appState.companies : [];
+          const coObj = companies.find((c) => String(c.id||'') === String(coId)) || null;
+          const coName = coObj?.name || null;
+          const targets = accounts.filter((a) => {
+            const ids0 = Array.isArray(a.companyIds) ? a.companyIds : (a.companyId ? [a.companyId] : []);
+            const ids = ids0.map((x) => String(x||'').trim());
+            const idOk = coId ? ids.includes(String(coId)) : false;
+            const nameOk = coName ? ids.includes(String(coName)) : false;
+            const allowedRoles = ["系統管理員","管理層","高階主管","初階主管","行政"];
+            const roleOk = allowedRoles.includes(String(a.role||""));
+            return roleOk && (idOk || nameOk);
+          });
+          if (!targets.length) {
+            const tzNow = nowInTZ('Asia/Taipei');
+            const html = `
+              <div class="block" id="leader-block-makeups">
+                <div class="block-header"><span class="block-title">補卡列表</span><div class="block-actions"><select id="leaderMakeupNameFilter" class="input"><option value="">全部</option></select><input id="leaderMakeupDateFilter" type="date" class="input" /></div></div>
+                <div class="table-wrapper">
+                  <table class="table" aria-label="補卡列表">
+                    <thead>
+                      <tr>
+                        <th>姓名</th>
+                        <th>日期時間</th>
+                        <th>地點</th>
+                        <th>狀態</th>
+                        <th>審核</th>
+                        <th>操作</th>
+                      </tr>
+                    </thead>
+                    <tbody id="leaderMakeupsTbody"><tr><td colspan="6">該公司無補卡紀錄</td></tr></tbody>
+                  </table>
+                </div>
+              </div>`;
+            container.innerHTML = html;
+            const dateInput = container.querySelector('#leaderMakeupDateFilter');
+            const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+            if (dateInput) dateInput.value = ymd(tzNow);
+            return;
+          }
+          const nameByUid = new Map();
+          targets.forEach((a) => {
+            const nm = a.name || a.email || '使用者';
+            const id1 = String(a.id||''); if (id1) nameByUid.set(id1, nm);
+            const id2 = String(a.uid||''); if (id2) nameByUid.set(id2, nm);
+          });
+          const uids = targets.map((a) => a.uid || a.id).filter(Boolean).map(String);
+          const ref = fns.collection(db, 'makeupRequests');
+          const chunks = []; for (let i = 0; i < uids.length; i += 10) chunks.push(uids.slice(i, i + 10));
+          const makeups = [];
+          for (const ch of chunks) {
+            const q = fns.query(ref, fns.where('uid', 'in', ch));
+            const snap = await withRetry(() => fns.getDocs(q));
+            snap.forEach((doc) => {
+              const data = doc.data() || {};
+              let created = data.createdAt;
+              let dt = null;
+              if (created && typeof created.toDate === 'function') dt = created.toDate(); else if (typeof created === 'string') dt = new Date(created);
+              if (!(dt instanceof Date) || isNaN(dt)) dt = new Date();
+              const nm = nameByUid.get(String(data.uid||'')) || data.name || '使用者';
+              makeups.push({ id: doc.id, ...data, dt, name: nm });
+            });
+          }
+          const html = `
+            <div class="block" id="leader-block-makeups">
+              <div class="block-header"><span class="block-title">補卡列表</span><div class="block-actions"><select id="leaderMakeupNameFilter" class="input"></select><input id="leaderMakeupDateFilter" type="date" class="input" /></div></div>
+              <div class="table-wrapper">
+                <table class="table" aria-label="補卡列表">
+                  <thead>
+                    <tr>
+                      <th>姓名</th>
+                      <th>日期時間</th>
+                      <th>地點</th>
+                      <th>狀態</th>
+                      <th>審核</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="leaderMakeupsTbody"><tr><td colspan="6">該公司無補卡紀錄</td></tr></tbody>
+                </table>
+              </div>
+            </div>`;
+          container.innerHTML = html;
+          const nameFilter = container.querySelector('#leaderMakeupNameFilter');
+          const dateInput = container.querySelector('#leaderMakeupDateFilter');
+          const tzNow = nowInTZ('Asia/Taipei');
+          const formatDT = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+          const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+          const nameOptions = [{ value: '', label: '全部' }].concat(targets.map((a) => ({ value: String(a.uid || a.id || ''), label: a.name || a.email || '使用者' })));
+          if (nameFilter) { nameFilter.innerHTML = nameOptions.map((o) => `<option value="${o.value}">${o.label}</option>`).join(''); }
+          const tbody = container.querySelector('#leaderMakeupsTbody');
+          function renderMakeups() {
+            if (!tbody) return;
+            const v = String(dateInput?.value || '');
+            const y = Number(v.split('-')[0] || tzNow.getFullYear());
+            const m = Number((v.split('-')[1] || String(tzNow.getMonth()+1)).padStart(2,'0')) - 1;
+            const d = Number((v.split('-')[2] || String(tzNow.getDate())).padStart(2,'0'));
+            const selUid = String(nameFilter?.value || '').trim();
+            const start = new Date(y, m, d);
+            const end = new Date(y, m, d + 1);
+            const rows = makeups
+              .filter((a) => a.dt >= start && a.dt < end && (!selUid || String(a.uid||'') === selUid))
+              .sort((a,b) => b.dt - a.dt)
+              .map((a) => {
+                const dtStr = formatDT(a.dt);
+                const place = a.place || '';
+                const status = a.status || '';
+                const state = a.state || '送審';
+                const isAdmin = String(appState.currentUserRole||'') === '系統管理員';
+                const processed = state && state !== '送審';
+                const approveCls = processed ? 'btn btn-grey' : 'btn btn-green';
+                const rejectCls = processed ? 'btn btn-grey' : 'btn btn-darkred';
+                const approveDisabled = (!isAdmin || processed) ? 'disabled' : '';
+                const rejectDisabled = (!isAdmin || processed) ? 'disabled' : '';
+                const editDisabled = (!isAdmin) ? 'disabled' : '';
+                const deleteDisabled = (!isAdmin) ? 'disabled' : '';
+                return `<tr data-id="${a.id}"><td>${a.name}</td><td>${dtStr}</td><td>${place}</td><td>${status}</td><td>${state}</td><td class="cell-actions"><button class="${approveCls}" data-act="approve" data-id="${a.id}" ${approveDisabled}>核准</button> <button class="${rejectCls}" data-act="reject" data-id="${a.id}" ${rejectDisabled}>拒絕</button> <button class="btn btn-blue" data-act="edit" data-id="${a.id}" ${editDisabled}>編輯</button> <button class="btn btn-red" data-act="delete" data-id="${a.id}" ${deleteDisabled}>刪除</button></td></tr>`;
+              }).join('');
+            tbody.innerHTML = rows || `<tr><td colspan="6">該日無補卡紀錄</td></tr>`;
+          }
+          if (dateInput) dateInput.value = ymd(tzNow);
+          renderMakeups();
+          dateInput?.addEventListener('change', () => { renderMakeups(); });
+          nameFilter?.addEventListener('change', () => { renderMakeups(); });
+          tbody?.addEventListener('click', async (e) => {
+            const btn = e.target.closest('button');
+            if (!btn) return;
+            const act = btn.dataset.act || '';
+            const id = btn.dataset.id || '';
+            const rec = makeups.find((x) => x.id === id);
+            if (!rec) return;
+            const isAdmin = String(appState.currentUserRole||'') === '系統管理員';
+            try {
+              await ensureFirebase();
+              if (act === 'approve' || act === 'reject') {
+                if (!isAdmin) { alert('僅系統管理員可變更狀態'); return; }
+                const newState = act === 'approve' ? '核准' : '拒絕';
+                const payload = { state: newState, updatedAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date(networkNowMs()).toISOString() };
+                await withRetry(() => fns.setDoc(fns.doc(db, 'makeupRequests', id), payload, { merge: true }));
+                try { rec.state = newState; } catch {}
+                renderMakeups();
+              } else if (act === 'edit') {
+                if (!isAdmin) { alert('僅系統管理員可變更狀態'); return; }
+                openModal({
+                  title: '變更審核狀態',
+                  fields: [ { key: 'state', label: '審核狀態', type: 'select', options: [ { value: '', label: '待核准' }, { value: '核准', label: '核准' }, { value: '拒絕', label: '拒絕' } ] } ],
+                  submitText: '確認',
+                  onSubmit: async (data) => {
+                    try {
+                      const raw = String(data.state||'').trim();
+                      const nv = raw || '送審';
+                      const payload = { state: nv, updatedAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date(networkNowMs()).toISOString() };
+                      await withRetry(() => fns.setDoc(fns.doc(db, 'makeupRequests', id), payload, { merge: true }));
+                      try { rec.state = nv; } catch {}
+                      renderMakeups();
+                      return true;
+                    } catch (err) { alert(`更新失敗：${err?.message || err}`); return false; }
+                  },
+                  refreshOnSubmit: false,
+                });
+              } else if (act === 'delete') {
+                if (!isAdmin) { alert('僅系統管理員可刪除'); return; }
+                const ok = await confirmAction({ title: '確認刪除', text: '確定要刪除此補卡申請嗎？', confirmText: '刪除' });
+                if (!ok) return;
+                await withRetry(() => fns.deleteDoc(fns.doc(db, 'makeupRequests', id)));
+                try { const i = makeups.findIndex((x) => x.id === id); if (i >= 0) makeups.splice(i, 1); } catch {}
+                renderMakeups();
               }
             } catch (err) { alert(`操作失敗：${err?.message || err}`); }
           });
@@ -5232,11 +5580,12 @@ emailSignInBtn?.addEventListener("click", async () => {
 })();
 // 網路時間初始化
 (async () => { try { await initNetworkTime(); } catch {} })();
+(async () => { try { await ensureServiceWorker(); } catch {} })();
 // 子分頁定義（頁中上）
 const SUB_TABS = {
   home: [],
   checkin: ["紀錄", "請假", "計點"],
-  leader: ["地圖", "紀錄", "請假", "計點"],
+  leader: ["地圖", "紀錄", "請假", "計點", "補卡"],
   personnel: ["班表"],
   manage: ["總覽", "地圖", "記錄", "請假", "計點"],
   feature: ["公告", "文件", "工具"],
@@ -5251,9 +5600,23 @@ function ensureNotificationPermission() {
   } catch { return Promise.resolve(false); }
 }
 
+function ensureServiceWorker() {
+  try {
+    if (!('serviceWorker' in navigator)) return Promise.resolve(false);
+    return navigator.serviceWorker.getRegistration().then((r) => {
+      if (r) return true;
+      return navigator.serviceWorker.register('sw.js').then(() => true).catch(() => false);
+    });
+  } catch { return Promise.resolve(false); }
+}
+
 async function refreshSubtabBadges() {
   const btns = Array.from(subTabsEl.querySelectorAll('.subtab-btn'));
   if (!btns.length) return;
+  if (activeMainTab === 'checkin') {
+    for (const b of btns) { const badge = b.querySelector('.subtab-badge'); if (badge) badge.remove(); }
+    return;
+  }
   let leavePending = 0;
   let appealPending = 0;
   let leaveTw = 0, leaveTy = 0;
@@ -5342,9 +5705,15 @@ async function refreshSubtabBadges() {
   }
   if (toNotify.length) {
     try {
+      const swOk = await ensureServiceWorker();
       const granted = await ensureNotificationPermission();
       if (granted) {
-        toNotify.forEach((n) => { try { new Notification('待審核提醒', { body: `${n.label} ${n.count}`, icon: 'favicon.svg' }); } catch {} });
+        if (swOk && navigator.serviceWorker && navigator.serviceWorker.ready) {
+          const reg = await navigator.serviceWorker.ready;
+          toNotify.forEach((n) => { try { reg.showNotification('待審核提醒', { body: `${n.label} ${n.count}`, icon: 'favicon.svg' }); } catch {} });
+        } else {
+          toNotify.forEach((n) => { try { new Notification('待審核提醒', { body: `${n.label} ${n.count}`, icon: 'favicon.svg' }); } catch {} });
+        }
       }
     } catch {}
   }
@@ -5919,7 +6288,19 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
                 }
               })();
               const place = r.locationName || '未知地點';
-              const flagHtml = r.inRadius === true ? ' <span class="status-flag good">正常</span>' : ' <span class="status-flag bad">異常</span>';
+              const flagHtml = (() => {
+                const st = String(r.status||'');
+                const baseSt = st.split('-')[0];
+                const i = st.indexOf('-');
+                const reason = i >= 0 ? st.slice(i+1) : '';
+                if ((baseSt === '外出' || baseSt === '抵達' || baseSt === '離開') && reason) {
+                  const rules = Array.isArray(appState.pointsRules) ? appState.pointsRules : [];
+                  const match = rules.find((x) => String(x.reason||'') === String(reason));
+                  const abnormal = match && String(match.status||'') === '異常';
+                  return abnormal ? ` <span class="status-flag bad">異常-${reason}</span>` : ' <span class="status-flag good">正常</span>';
+                }
+                return r.inRadius === true ? ' <span class="status-flag good">正常</span>' : ' <span class="status-flag bad">異常</span>';
+              })();
               const stDisplay = (() => {
                 const reason = r.reason || '';
                 if ((baseSt === '外出' || baseSt === '抵達' || baseSt === '離開') && reason) return `${baseSt}-${reason}`;
