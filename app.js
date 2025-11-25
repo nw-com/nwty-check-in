@@ -369,6 +369,13 @@ const featureSection = document.getElementById("featureSection");
 const personnelSection = document.getElementById("personnelSection");
 const tabButtons = Array.from(document.querySelectorAll(".tab-btn"));
 
+// 初始化外部分頁按鈕標籤（從 localStorage 載入）
+try {
+  const lab = getExternalTabLabel ? getExternalTabLabel() : '社區';
+  const el = document.querySelector('.tab-btn[data-tab="external"] .tab-label');
+  if (el) el.textContent = lab || '社區';
+} catch {}
+
 const locationInfo = document.getElementById("locationInfo");
 const checkinBtn = document.getElementById("checkinBtn");
 const checkinResult = document.getElementById("checkinResult");
@@ -2057,6 +2064,8 @@ function renderSettingsContent(label) {
     renderSettingsGeneral();
   } else if (label === "社區") {
     renderSettingsCommunities();
+  } else if (label === "外部") {
+    renderSettingsExternal();
   } else if (label === "帳號") {
     renderSettingsAccounts();
   } else if (label === "角色") {
@@ -2066,6 +2075,64 @@ function renderSettingsContent(label) {
   } else {
     settingsContent.innerHTML = "";
   }
+}
+
+function getExternalTabLabel() {
+  try {
+    const raw = localStorage.getItem('externalTabLabel') || '';
+    const v = String(raw || '').trim();
+    return v || '社區';
+  } catch { return '社區'; }
+}
+function setExternalTabLabel(label) {
+  try { localStorage.setItem('externalTabLabel', String(label||'')); } catch {}
+  try {
+    const btn = document.querySelector('.tab-btn[data-tab="external"] .tab-label');
+    if (btn) btn.textContent = String(label||'') || '社區';
+  } catch {}
+}
+
+function renderSettingsExternal() {
+  const companies = Array.isArray(appState.companies) ? appState.companies : [];
+  const label = getExternalTabLabel();
+  settingsContent.innerHTML = `
+    <div class="block" id="block-external">
+      <div class="block-header"><span class="block-title">外部連結設定</span></div>
+      <div class="form-row"><label class="label">分頁按鈕名稱</label><input id="externalTabLabelInput" class="input" type="text" value="${label}" /></div>
+      <div class="table-wrapper">
+        <table class="table" aria-label="外部連結">
+          <thead><tr><th>公司</th><th>外部連結網址</th><th>操作</th></tr></thead>
+          <tbody>
+            ${companies.map((c)=>`<tr data-id="${c.id}"><td>${c.name||c.id}</td><td><input class="input" type="url" value="${String(c.externalUrl||'')}" placeholder="https://..." /></td><td class="cell-actions"><button class="btn" data-act="save">儲存</button></td></tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div class="block-actions"><button id="btnSaveExternalLabel" class="btn">儲存名稱</button></div>
+    </div>`;
+  const btnSaveLabel = document.getElementById('btnSaveExternalLabel');
+  attachPressInteractions(btnSaveLabel);
+  btnSaveLabel?.addEventListener('click', () => {
+    const inp = document.getElementById('externalTabLabelInput');
+    const v = inp && 'value' in inp ? String(inp.value||'') : '';
+    setExternalTabLabel(v || '社區');
+    alert('已儲存分頁按鈕名稱');
+  });
+  const table = settingsContent.querySelector('#block-external table');
+  table?.addEventListener('click', async (e) => {
+    const t = e.target; if (!(t instanceof HTMLElement)) return;
+    const act = t.dataset.act || ''; if (!act) return;
+    const tr = t.closest('tr'); const cid = tr?.getAttribute('data-id') || '';
+    const input = tr?.querySelector('input'); const url = input ? String(input.value||'').trim() : '';
+    try {
+      await ensureFirebase();
+      if (cid && db && fns.setDoc && fns.doc) {
+        await withRetry(() => fns.setDoc(fns.doc(db, 'companies', cid), { externalUrl: url, updatedAt: fns.serverTimestamp ? fns.serverTimestamp() : new Date(networkNowMs()).toISOString() }, { merge: true }));
+      }
+      const idx = companies.findIndex((c) => String(c.id||'') === String(cid));
+      if (idx >= 0) companies[idx] = { ...companies[idx], externalUrl: url };
+      alert('已儲存外部連結網址');
+    } catch (err) { alert(`儲存失敗：${err?.message || err}`); }
+  });
 }
 
 function renderSettingsGeneral() {
@@ -3532,8 +3599,35 @@ let ensureFirebasePromise = null;
 }
 
 // 分頁切換
+  function resolveExternalUrl() {
+    try {
+      const companies = Array.isArray(appState.companies) ? appState.companies : [];
+      let coId = appState.leaderCompanyFilter || null;
+      if (!coId) {
+        const me = appState.accounts.find((a) => a.id === appState.currentUserId) || null;
+        const ids = Array.isArray(me?.companyIds) ? me.companyIds : (me?.companyId ? [me.companyId] : []);
+        coId = ids && ids.length ? ids[0] : null;
+      }
+      let co = null;
+      if (coId) {
+        co = companies.find((c) => String(c.id||'') === String(coId)) || companies.find((c) => String(c.name||'') === String(coId)) || null;
+      }
+      if (!co) co = companies[0] || null;
+      const url = String(co?.externalUrl || '').trim();
+      return url || '';
+    } catch { return ''; }
+  }
   tabButtons.forEach((btn) => {
-    btn.addEventListener("click", () => setActiveTab(btn.dataset.tab));
+    btn.addEventListener("click", () => {
+      const tab = btn.dataset.tab;
+      if (tab === 'external') {
+        const url = resolveExternalUrl();
+        if (url) { try { window.open(url, '_blank'); } catch {} }
+        else { alert('未設定外部連結網址'); }
+        return;
+      }
+      setActiveTab(tab);
+    });
   });
 
   // 請假與補卡
@@ -3800,7 +3894,7 @@ let ensureFirebasePromise = null;
       const items = [];
       snap.forEach((docSnap) => {
         const d = docSnap.data() || {};
-        items.push({ id: docSnap.id, name: d.name || "", coords: d.coords || "", radiusMeters: d.radiusMeters ?? null, order: (typeof d.order === "number" ? d.order : null) });
+        items.push({ id: docSnap.id, name: d.name || "", coords: d.coords || "", radiusMeters: d.radiusMeters ?? null, order: (typeof d.order === "number" ? d.order : null), externalUrl: (typeof d.externalUrl === 'string' ? d.externalUrl : '') });
       });
       items.sort(compareCommunityByCode);
       // 以雲端資料覆蓋本地預設項目，避免預設示例持續顯示
@@ -3972,7 +4066,7 @@ let ensureFirebasePromise = null;
 function applyPagePermissionsForUser(user) {
   try {
     const role = appState.currentUserRole || "一般";
-    const allTabs = ["home","checkin","leader","manage","feature","personnel","settings"];
+    const allTabs = ["home","checkin","leader","manage","feature","external","personnel","settings"];
     let allowed = ["home"];
     const cfg = Array.isArray(appState.rolesConfig) ? appState.rolesConfig.find((r) => String(r.name||"") === String(role)) : null;
     if (cfg && Array.isArray(cfg.allowedTabs) && cfg.allowedTabs.length) {
@@ -3981,31 +4075,31 @@ function applyPagePermissionsForUser(user) {
     } else {
       switch (role) {
         case "系統管理員":
-          allowed = ["home","checkin","leader","manage","feature","personnel","settings"];
+          allowed = ["home","checkin","leader","manage","feature","external","personnel","settings"];
           break;
         case "管理層":
-          allowed = ["home","checkin","leader","manage","feature","personnel"];
+          allowed = ["home","checkin","leader","manage","feature","external","personnel"];
           break;
         case "高階主管":
-          allowed = ["home","checkin","manage","feature"];
+          allowed = ["home","checkin","manage","feature","external"];
           break;
         case "初階主管":
-          allowed = ["home","checkin","manage","feature"];
+          allowed = ["home","checkin","manage","feature","external"];
           break;
         case "行政":
-          allowed = ["home","checkin","feature"];
+          allowed = ["home","checkin","feature","external"];
           break;
         case "保全":
-          allowed = ["home","checkin","feature"];
+          allowed = ["home","checkin","feature","external"];
           break;
         case "總幹事":
         case "秘書":
         case "清潔":
         case "機電":
-          allowed = ["home","checkin","feature"];
+          allowed = ["home","checkin","feature","external"];
           break;
         default:
-          allowed = ["home","checkin","feature"];
+          allowed = ["home","checkin","feature","external"];
           break;
       }
     }
@@ -4655,7 +4749,9 @@ function hasFullAccessToTab(tab) {
             const ids = ids0.map((x) => String(x||'').trim());
             const idOk = coId ? ids.includes(String(coId)) : false;
             const nameOk = coName ? ids.includes(String(coName)) : false;
-            return idOk || nameOk;
+            const allowedRoles = ["高階主管","初階主管","行政"];
+            const roleOk = allowedRoles.includes(String(a.role||""));
+            return roleOk && (idOk || nameOk);
           });
           if (!targets.length) {
             // 仍渲染空界面，避免誤導
@@ -4970,7 +5066,7 @@ function hasFullAccessToTab(tab) {
             const ids = ids0.map((x) => String(x||'').trim());
             const idOk = coId ? ids.includes(String(coId)) : false;
             const nameOk = coName ? ids.includes(String(coName)) : false;
-            const allowedRoles = ["系統管理員","管理層","高階主管","初階主管","行政"];
+            const allowedRoles = ["高階主管","初階主管","行政"];
             const roleOk = allowedRoles.includes(String(a.role||""));
             return roleOk && (idOk || nameOk);
           });
@@ -5188,7 +5284,7 @@ function hasFullAccessToTab(tab) {
             const ids = ids0.map((x) => String(x||'').trim());
             const idOk = coId ? ids.includes(String(coId)) : false;
             const nameOk = coName ? ids.includes(String(coName)) : false;
-            const allowedRoles = ["系統管理員","管理層","高階主管","初階主管","行政"];
+            const allowedRoles = ["高階主管","初階主管","行政"];
             const roleOk = allowedRoles.includes(String(a.role||""));
             return roleOk && (idOk || nameOk);
           });
@@ -5576,7 +5672,7 @@ function hasFullAccessToTab(tab) {
             const ids = ids0.map((x) => String(x||'').trim());
             const idOk = coId ? ids.includes(String(coId)) : false;
             const nameOk = coName ? ids.includes(String(coName)) : false;
-            const allowedRoles = ["系統管理員","管理層","高階主管","初階主管","行政"];
+            const allowedRoles = ["高階主管","初階主管","行政"];
             const roleOk = allowedRoles.includes(String(a.role||""));
             return roleOk && (idOk || nameOk);
           });
@@ -6038,7 +6134,7 @@ const SUB_TABS = {
   personnel: ["班表"],
   manage: ["總覽", "地圖", "記錄", "請假", "計點"],
   feature: ["公告", "文件", "工具"],
-  settings: ["一般", "帳號", "社區", "角色", "規則", "系統"],
+  settings: ["一般", "帳號", "社區", "外部", "角色", "規則", "系統"],
 };
 
 function ensureNotificationPermission() {
@@ -7698,17 +7794,17 @@ async function loadRolesFromFirestore() {
     }
     const defMap = (r) => {
       switch (r) {
-        case '系統管理員': return ["home","checkin","leader","manage","feature","personnel","settings"]; 
-        case '管理層': return ["home","checkin","leader","manage","feature","personnel"]; 
-        case '高階主管': return ["home","checkin","leader","manage","feature"]; 
-        case '初階主管': return ["home","checkin","leader","manage","feature"]; 
-        case '行政': return ["home","checkin","leader","feature"]; 
-        case '保全': return ["home","checkin","feature"]; 
+        case '系統管理員': return ["home","checkin","leader","manage","feature","external","personnel","settings"]; 
+        case '管理層': return ["home","checkin","leader","manage","feature","external","personnel"]; 
+        case '高階主管': return ["home","checkin","leader","manage","feature","external"]; 
+        case '初階主管': return ["home","checkin","leader","manage","feature","external"]; 
+        case '行政': return ["home","checkin","leader","feature","external"]; 
+        case '保全': return ["home","checkin","feature","external"]; 
         case '總幹事':
         case '秘書':
         case '清潔':
-        case '機電': return ["home","checkin","feature"]; 
-        default: return ["home","checkin","feature"]; 
+        case '機電': return ["home","checkin","feature","external"]; 
+        default: return ["home","checkin","feature","external"]; 
       }
     };
     appState.rolesConfig = list.length ? list : [];
@@ -7725,17 +7821,17 @@ async function loadRolesFromFirestore() {
   } catch {
     const defMap = (r) => {
       switch (r) {
-        case '系統管理員': return ["home","checkin","leader","manage","feature","personnel","settings"]; 
-        case '管理層': return ["home","checkin","leader","manage","feature","personnel"]; 
-        case '高階主管': return ["home","checkin","leader","manage","feature"]; 
-        case '初階主管': return ["home","checkin","leader","manage","feature"]; 
-        case '行政': return ["home","checkin","leader","feature"]; 
-        case '保全': return ["home","checkin","feature"]; 
+        case '系統管理員': return ["home","checkin","leader","manage","feature","external","personnel","settings"]; 
+        case '管理層': return ["home","checkin","leader","manage","feature","external","personnel"]; 
+        case '高階主管': return ["home","checkin","leader","manage","feature","external"]; 
+        case '初階主管': return ["home","checkin","leader","manage","feature","external"]; 
+        case '行政': return ["home","checkin","leader","feature","external"]; 
+        case '保全': return ["home","checkin","feature","external"]; 
         case '總幹事':
         case '秘書':
         case '清潔':
-        case '機電': return ["home","checkin","feature"]; 
-        default: return ["home","checkin","feature"]; 
+        case '機電': return ["home","checkin","feature","external"]; 
+        default: return ["home","checkin","feature","external"]; 
       }
     };
     const fromDefaults = getRoles();
@@ -7761,7 +7857,7 @@ async function loadRolesFromFirestore() {
 
 function renderSettingsRoles() {
   const container = settingsContent;
-  const allTabs = ["home","checkin","leader","manage","feature","personnel","settings"];
+  const allTabs = ["home","checkin","leader","manage","feature","external","personnel","settings"];
   const labelMap = (() => {
     const map = {};
     Array.from(document.querySelectorAll('.tab-btn')).forEach((b) => {
