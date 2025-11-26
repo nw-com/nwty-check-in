@@ -4373,6 +4373,7 @@ function hasFullAccessToTab(tab) {
       sel?.addEventListener("change", () => {
         refreshAddVisibility();
         updateRoster(currentDate);
+        document.getElementById("rosterCalendar")?.dispatchEvent(new Event("rosterPlansChanged"));
       });
       let currentDate = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
       function isHoliday(d) { return d.getDay() === 0 || d.getDay() === 6; }
@@ -6362,6 +6363,7 @@ function hasFullAccessToTab(tab) {
             viewDate = new Date(viewDate.getFullYear(), viewDate.getMonth() + 1, 1);
             renderMonth(viewDate);
           });
+          sel?.addEventListener("change", () => { renderMonth(viewDate); });
         }
 
         renderMonth(viewDate);
@@ -6665,25 +6667,35 @@ async function refreshSubtabBadges() {
   try {
     const leaderTabBtn = document.querySelector('.tab-btn[data-tab="leader"]');
     if (leaderTabBtn) {
-      const companies2 = Array.isArray(appState.companies) ? appState.companies : [];
-      const selectedCoId2 = appState.leaderCompanyFilter || '';
-      const selCo2 = companies2.find((c) => String(c.id||'') === String(selectedCoId2)) || null;
-      const isTw2 = selCo2 ? /台北/.test(String(selCo2.name||'')) : false;
-      const isTy2 = selCo2 ? /桃園/.test(String(selCo2.name||'')) : false;
-      const leaveCount2 = selCo2 ? (isTw2 ? leaveTw : (isTy2 ? leaveTy : leavePending)) : 0;
-      const appealCount2 = selCo2 ? (isTw2 ? appealTw : (isTy2 ? appealTy : appealPending)) : 0;
-      const makeupCount2 = selCo2 ? (isTw2 ? makeupTw : (isTy2 ? makeupTy : makeupPending)) : 0;
-      const totalPending = Number(leaveCount2 || 0) + Number(appealCount2 || 0) + Number(makeupCount2 || 0);
-      const hasMapAnomaly = !!document.querySelector('#leaderStatusTbody .status-flag.bad');
+      const recordTw = Number(changeTw || 0);
+      const recordTy = Number(changeTy || 0);
       let badge = leaderTabBtn.querySelector('.subtab-badge');
-      if (!totalPending && !hasMapAnomaly) { if (badge) badge.remove(); }
-      else {
+      if (recordTw > 0 || recordTy > 0) {
         if (!badge) { badge = document.createElement('span'); badge.className = 'subtab-badge'; leaderTabBtn.appendChild(badge); }
-        badge.textContent = totalPending > 0 ? String(totalPending) : '';
-        const breakdown = `請假:${Number(leaveCount2||0)} 計點:${Number(appealCount2||0)} 補卡:${Number(makeupCount2||0)}`;
-        const tip = totalPending > 0 ? breakdown : '地圖異常';
+        badge.textContent = `台北${recordTw}|桃園${recordTy}`;
+        const tip = `紀錄 台北:${recordTw} 桃園:${recordTy}`;
         badge.title = tip;
         badge.setAttribute('aria-label', tip);
+      } else {
+        const companies2 = Array.isArray(appState.companies) ? appState.companies : [];
+        const selectedCoId2 = appState.leaderCompanyFilter || '';
+        const selCo2 = companies2.find((c) => String(c.id||'') === String(selectedCoId2)) || null;
+        const isTw2 = selCo2 ? /台北/.test(String(selCo2.name||'')) : false;
+        const isTy2 = selCo2 ? /桃園/.test(String(selCo2.name||'')) : false;
+        const leaveCount2 = selCo2 ? (isTw2 ? leaveTw : (isTy2 ? leaveTy : leavePending)) : 0;
+        const appealCount2 = selCo2 ? (isTw2 ? appealTw : (isTy2 ? appealTy : appealPending)) : 0;
+        const makeupCount2 = selCo2 ? (isTw2 ? makeupTw : (isTy2 ? makeupTy : makeupPending)) : 0;
+        const totalPending = Number(leaveCount2 || 0) + Number(appealCount2 || 0) + Number(makeupCount2 || 0);
+        const hasMapAnomaly = !!document.querySelector('#leaderStatusTbody .status-flag.bad');
+        if (!totalPending && !hasMapAnomaly) { if (badge) badge.remove(); }
+        else {
+          if (!badge) { badge = document.createElement('span'); badge.className = 'subtab-badge'; leaderTabBtn.appendChild(badge); }
+          badge.textContent = totalPending > 0 ? String(totalPending) : '';
+          const breakdown = `請假:${Number(leaveCount2||0)} 計點:${Number(appealCount2||0)} 補卡:${Number(makeupCount2||0)}`;
+          const tip = totalPending > 0 ? breakdown : '地圖異常';
+          badge.title = tip;
+          badge.setAttribute('aria-label', tip);
+        }
       }
     }
   } catch {}
