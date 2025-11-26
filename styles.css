@@ -215,6 +215,7 @@ button[disabled] { cursor: not-allowed; }
 
 /* 讓角色權限隱藏能壓過 .tab-btn 的 display 設定 */
 .app-footer .tab-btn.hidden { display: none !important; }
+.app-footer .tab-btn { position: relative; }
 
 /* 頁尾圖示 */
 .tab-icon { width: 22px; height: 22px; color: currentColor; }
@@ -542,6 +543,8 @@ body.status-leave-request { --hero-pulse-rgb: 245,124,0; }
 .roster-cal-duty { display: inline-block; margin-top: 4px; padding: 2px 6px; font-size: 12px; color: #6b4e00; background: #fff3a5; border: 1px solid #ffe58f; border-radius: 999px; }
 /* 打卡紀錄卡片分隔樣式 */
 .record-card { background: #f3f4f6; padding: 8px; margin: 8px 0; border-radius: 0; }
+.record-card.pending-change { background: #ffe5cc; }
+.record-card.changed-soft { background: #fff3e6; }
 .record-actions { display: flex; gap: 8px; }
 .record-actions .btn { flex: 1; }
 /* 面板內按鈕統一直角 */
@@ -579,3 +582,5 @@ body.status-leave-request { --hero-pulse-rgb: 245,124,0; }
 #leaderMapView { width: 100%; max-width: 100%; }
 #leaderStatusBlock { width: 100%; max-width: 100%; }
 #leaderSection .panel { max-width: 100%; overflow-x: hidden; }
+#leader-block-points-month #leaderPointsPrevMonth,
+#leader-block-points-month #leaderPointsNextMonth { background: #ffffff; color: #111827; border: none; }
