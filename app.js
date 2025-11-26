@@ -2072,6 +2072,8 @@ function renderSettingsContent(label) {
     renderSettingsRoles();
   } else if (label === "規則") {
     renderSettingsRules();
+  } else if (label === "推播") {
+    renderSettingsNotifications();
   } else {
     settingsContent.innerHTML = "";
   }
@@ -3422,11 +3424,22 @@ let ensureFirebasePromise = null;
         const initialDisplayName = user.displayName || user.email || "使用者";
         userNameEl.textContent = `歡迎~ ${initialDisplayName}`;
         if (homeHeaderNameEl) homeHeaderNameEl.textContent = initialDisplayName;
-      if (userPhotoEl) {
-        if (user.photoURL) userPhotoEl.src = user.photoURL; else userPhotoEl.removeAttribute("src");
-        // 將頭像設為按鈕：點擊開啟個人資訊與登出
-        userPhotoEl.onclick = () => showProfileModal(user, role);
-      }
+  if (userPhotoEl) {
+    if (user.photoURL) userPhotoEl.src = user.photoURL; else userPhotoEl.removeAttribute("src");
+    userPhotoEl.onclick = () => {
+      try {
+        homeMapOverlay?.classList.remove("hidden");
+        if (navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(
+            (pos) => { lastCoords = pos.coords; updateHomeMap(); },
+            (err) => { alert(`定位失敗：${err?.message || err}`); }
+          );
+        } else {
+          alert("此裝置不支援定位");
+        }
+      } catch {}
+    };
+  }
       if (homeHeroPhoto) {
         if (user.photoURL) homeHeroPhoto.src = user.photoURL; else homeHeroPhoto.removeAttribute("src");
       }
@@ -4245,6 +4258,7 @@ function hasFullAccessToTab(tab) {
       manageSubTitle.textContent = label;
     } else if (activeMainTab === "feature") {
       featureSubTitle.textContent = label;
+      renderFeatureContent(label);
     } else if (activeMainTab === "settings") {
       if (settingsSubTitle) settingsSubTitle.textContent = label;
       if (label === "帳號") {
@@ -5641,9 +5655,18 @@ function hasFullAccessToTab(tab) {
           tbody.addEventListener('click', (e) => {
             const btn = e.target.closest('button.avatar-btn');
             if (btn) {
-              const src = btn.dataset.src || '';
-              const nm = btn.dataset.name || '';
-              openModal({ title: nm ? `${nm}的頭像` : '頭像', fields: [], submitText: '', afterRender: ({ body }) => { const img = document.createElement('img'); img.src = src; img.alt = nm || '頭像'; img.style.width = '100%'; img.style.height = 'auto'; img.style.maxHeight = '60vh'; img.style.objectFit = 'contain'; body.appendChild(img); } });
+              const tr = btn.closest('tr');
+              const uid = tr && tr.dataset.uid;
+              if (!uid) return;
+              const r = lastByUid.get(uid);
+              if (!r || typeof r.lat !== 'number' || typeof r.lng !== 'number') return;
+              const pos = { lat: r.lat, lng: r.lng };
+              try { map.panTo(pos); const z = map.getZoom(); if (typeof z === 'number') map.setZoom(Math.max(16, z)); else map.setZoom(16); } catch {}
+              const m = markerByUid.get(uid);
+              try { if (m && maps.Animation) { m.setAnimation(maps.Animation.BOUNCE); setTimeout(() => { try { m.setAnimation(null); } catch {} }, 1200); } } catch {}
+              homeMapOverlay?.classList.remove('hidden');
+              lastCoords = { latitude: r.lat, longitude: r.lng };
+              updateHomeMap();
               return;
             }
             const td = e.target.closest('td');
@@ -5659,6 +5682,9 @@ function hasFullAccessToTab(tab) {
             try { map.panTo(pos); const z = map.getZoom(); if (typeof z === 'number') map.setZoom(Math.max(16, z)); else map.setZoom(16); } catch {}
             const m = markerByUid.get(uid);
             try { if (m && maps.Animation) { m.setAnimation(maps.Animation.BOUNCE); setTimeout(() => { try { m.setAnimation(null); } catch {} }, 1200); } } catch {}
+            homeMapOverlay?.classList.remove('hidden');
+            lastCoords = { latitude: r.lat, longitude: r.lng };
+            updateHomeMap();
           });
         } catch (e) {
           const msg = e?.message || e; container.textContent = typeof msg === 'string' ? `載入失敗：${msg}` : "載入失敗";
@@ -6143,7 +6169,7 @@ const SUB_TABS = {
   personnel: ["班表"],
   manage: ["總覽", "地圖", "記錄", "請假", "計點"],
   feature: ["公告", "文件", "工具"],
-  settings: ["一般", "帳號", "社區", "外部", "角色", "規則", "系統"],
+  settings: ["一般", "帳號", "社區", "外部", "角色", "規則", "系統", "推播"],
 };
 
 function ensureNotificationPermission() {
@@ -8003,6 +8029,82 @@ function renderSettingsRoles() {
         if (typeof window !== 'undefined') window.Roles = (appState.rolesConfig || []).map((x) => x.name);
         tr?.parentElement?.removeChild(tr);
       } catch (e) { alert(`刪除失敗：${e?.message || e}`); }
+    }
+  });
+}
+  function renderFeatureContent(label) {
+    const panel = featureSection?.querySelector('.panel');
+    if (!panel) return;
+    let container = panel.querySelector('#featureDynamic');
+    if (!container) {
+      container = document.createElement('div');
+      container.id = 'featureDynamic';
+      panel.appendChild(container);
+    }
+    if (label === '推播') {
+      const perm = (typeof Notification !== 'undefined') ? Notification.permission : 'unsupported';
+      container.innerHTML = `
+        <div class="block">
+          <p>瀏覽器通知權限：<span id="notifyStatus">${perm}</span></p>
+          <div class="row"><button class="btn" id="btnRequestNotify">允許通知</button></div>
+          <div class="row"><button class="btn" id="btnTestNotify">測試通知</button></div>
+        </div>
+      `;
+      const statusEl = container.querySelector('#notifyStatus');
+      const reqBtn = container.querySelector('#btnRequestNotify');
+      const testBtn = container.querySelector('#btnTestNotify');
+      reqBtn?.addEventListener('click', async () => {
+        const ok = await ensureNotificationPermission();
+        if (statusEl) statusEl.textContent = ok ? 'granted' : ((typeof Notification !== 'undefined') ? Notification.permission : 'unsupported');
+      });
+      testBtn?.addEventListener('click', async () => {
+        try {
+          const reg = await (navigator.serviceWorker?.getRegistration?.() || Promise.resolve(null));
+          if (reg && reg.showNotification) {
+            reg.showNotification('測試通知', { body: '這是測試訊息', icon: 'favicon.svg' });
+          } else if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+            new Notification('測試通知', { body: '這是測試訊息' });
+          } else {
+            alert('尚未取得通知權限或不支援 Notification');
+          }
+        } catch (err) {
+          alert(`發送通知失敗：${err?.message || err}`);
+        }
+      });
+    } else {
+      container.innerHTML = `<div class="block"><p class="muted">此功能尚未實作</p></div>`;
+    }
+  }
+function renderSettingsNotifications() {
+  const container = settingsContent;
+  if (!container) return;
+  const perm = (typeof Notification !== 'undefined') ? Notification.permission : 'unsupported';
+  container.innerHTML = `
+    <div class="block">
+      <p>瀏覽器通知權限：<span id="notifyStatus">${perm}</span></p>
+      <div class="row"><button class="btn" id="btnRequestNotify">允許通知</button></div>
+      <div class="row"><button class="btn" id="btnTestNotify">測試通知</button></div>
+    </div>
+  `;
+  const statusEl = container.querySelector('#notifyStatus');
+  const reqBtn = container.querySelector('#btnRequestNotify');
+  const testBtn = container.querySelector('#btnTestNotify');
+  reqBtn?.addEventListener('click', async () => {
+    const ok = await ensureNotificationPermission();
+    if (statusEl) statusEl.textContent = ok ? 'granted' : ((typeof Notification !== 'undefined') ? Notification.permission : 'unsupported');
+  });
+  testBtn?.addEventListener('click', async () => {
+    try {
+      const reg = await (navigator.serviceWorker?.getRegistration?.() || Promise.resolve(null));
+      if (reg && reg.showNotification) {
+        reg.showNotification('測試通知', { body: '這是測試訊息', icon: 'favicon.svg' });
+      } else if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+        new Notification('測試通知', { body: '這是測試訊息' });
+      } else {
+        alert('尚未取得通知權限或不支援 Notification');
+      }
+    } catch (err) {
+      alert(`發送通知失敗：${err?.message || err}`);
     }
   });
 }
