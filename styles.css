@@ -216,6 +216,7 @@ button[disabled] { cursor: not-allowed; }
 /* 讓角色權限隱藏能壓過 .tab-btn 的 display 設定 */
 .app-footer .tab-btn.hidden { display: none !important; }
 .app-footer .tab-btn { position: relative; }
+.tab-btn[data-tab="leader"] { position: relative; }
 
 /* 頁尾圖示 */
 .tab-icon { width: 22px; height: 22px; color: currentColor; }

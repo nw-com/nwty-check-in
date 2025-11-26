@@ -143,6 +143,30 @@ function nowInTZ(tz) {
   const ss = Number(pick('second'));
   return new Date(y, m, d, hh, mm, ss);
 }
+function getTwHolidaySetForYear(y) {
+  try {
+    const raw = localStorage.getItem('twNationalHolidays');
+    const cfg = raw ? JSON.parse(raw) : {};
+    const arr = (cfg && cfg[y]) || null;
+    if (Array.isArray(arr) && arr.length) return new Set(arr);
+  } catch {}
+  const mmdd = (m, d) => `${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+  const base = [mmdd(1,1), mmdd(2,28), mmdd(4,4), mmdd(4,5), mmdd(5,1), mmdd(10,10)];
+  return new Set(base.map((s) => `${y}-${s}`));
+}
+function isTWNationalHoliday(date) {
+  const y = date.getFullYear();
+  const m = date.getMonth()+1;
+  const d = date.getDate();
+  const key = `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+  const set = getTwHolidaySetForYear(y);
+  return set.has(key);
+}
+function defaultRosterStatusForDate(date) {
+  const wd = date.getDay();
+  const weekendOrFri = (wd === 0 || wd === 6 || wd === 5);
+  return (weekendOrFri || isTWNationalHoliday(date)) ? '休假日' : '上班日';
+}
 function formatDateYYYYMMDD(d) {
   return d.getFullYear() + '-' + two(d.getMonth() + 1) + '-' + two(d.getDate());
 }
@@ -299,12 +323,10 @@ function getTodayRosterStatusForUser(uid) {
     const now = nowInTZ('Asia/Taipei');
     const ymd = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
     const plans = appState.rosterPlans || {};
-    const plan = (plans[u] || {})[ymd] || null;
-    if (plan && plan.status) return String(plan.status);
-    const wd = now.getDay();
-    const isDefaultHoliday = (wd === 0 || wd === 6 || wd === 5);
-    return isDefaultHoliday ? '休假日' : '上班日';
-  } catch { return ''; }
+  const plan = (plans[u] || {})[ymd] || null;
+  if (plan && plan.status) return String(plan.status);
+  return defaultRosterStatusForDate(now);
+} catch { return ''; }
 }
 
 function renderHomeRosterLabel() {
@@ -3507,6 +3529,7 @@ let ensureFirebasePromise = null;
       // 依帳號「頁面權限」控制可見的分頁（首頁永遠顯示）
       try { await loadRolesFromFirestore(); } catch {}
       applyPagePermissionsForUser(user);
+      try { refreshSubtabBadges(); } catch {}
 
         // 紀錄目前裝置型號至 Firestore（供其他裝置顯示）
         initDeviceProfile();
@@ -3575,6 +3598,7 @@ let ensureFirebasePromise = null;
         loadCommunitiesFromFirestore(),
         loadPointsRulesFromFirestore(),
       ]);
+      try { refreshSubtabBadges(); } catch {}
       // 依設定分頁可見決定是否載入待審核帳號
       if (hasFullAccessToTab('settings')) {
         await loadPendingAccountsFromFirestore();
@@ -4399,9 +4423,10 @@ function hasFullAccessToTab(tab) {
         const plan = getRosterPlan(bucket, date.getFullYear(), date.getMonth(), date.getDate());
         const wd = date.getDay();
         const holiday = isHoliday(date);
-        const startCell = plan ? (String(plan.status||"").includes("休假") ? "" : (plan.startTime || "09:00")) : "09:00";
-        const endCell = plan ? (String(plan.status||"").includes("休假") ? "" : (plan.endTime || "17:30")) : "17:30";
-        const status = plan ? plan.status : "上班日";
+        const defaultStatus = defaultRosterStatusForDate(date);
+        const startCell = plan ? (String(plan.status||"").includes("休假") ? "" : (plan.startTime || "09:00")) : (defaultStatus === "休假日" ? "" : "09:00");
+        const endCell = plan ? (String(plan.status||"").includes("休假") ? "" : (plan.endTime || "17:30")) : (defaultStatus === "休假日" ? "" : "17:30");
+        const status = plan ? plan.status : defaultStatus;
         const tr = document.createElement("tr");
         tr.innerHTML = `<td>${startCell}</td><td>${endCell}</td><td>${status}</td><td><button class="btn btn-xs roster-edit">編輯</button> <button class="btn btn-xs roster-del">刪除</button></td>`;
         // 編輯
@@ -4667,7 +4692,7 @@ function hasFullAccessToTab(tab) {
             const plan = getRosterPlan(bucket, y, m, Number(dayStr));
             const k = `${y}-${String(m+1).padStart(2,'0')}-${String(dayStr).padStart(2,'0')}`;
             const wd = new Date(y,m,Number(dayStr)).getDay();
-            let base = plan?.status || '上班日';
+            let base = plan?.status || defaultRosterStatusForDate(new Date(y, m, Number(dayStr)));
             const norm = (s) => {
               const v = String(s||'');
               if (v.includes('值班')) return '值班日';
@@ -5201,6 +5226,28 @@ function hasFullAccessToTab(tab) {
               list.push({ id: doc.id, ...data, dt, sdt, edt, name: nm });
             });
           }
+          const sigSet = new Set(list.map((x) => `${String(x.uid||'')}|${x.sdt?x.sdt.toISOString():''}|${x.edt?x.edt.toISOString():''}|${String(x.type||'')}|${String(x.reason||'')}`));
+          try {
+            const raw = localStorage.getItem('pendingLeaves');
+            const arr = raw ? JSON.parse(raw) : [];
+            const uidSet = new Set(uids.map(String));
+            (Array.isArray(arr) ? arr : []).forEach((data) => {
+              try {
+                const uid = String(data.uid||'');
+                if (!uid || !uidSet.has(uid)) return;
+                const created = data.createdAt;
+                const dt = typeof created === 'string' ? new Date(created) : (created && typeof created.toDate === 'function' ? created.toDate() : new Date());
+                const s = data.startAt; const e = data.endAt;
+                const sdt = typeof s === 'string' ? new Date(s) : (s && typeof s.toDate === 'function' ? s.toDate() : null);
+                const edt = typeof e === 'string' ? new Date(e) : (e && typeof e.toDate === 'function' ? e.toDate() : null);
+                const nm = nameByUid.get(uid) || data.name || '使用者';
+                const key = `${uid}|${sdt?sdt.toISOString():''}|${edt?edt.toISOString():''}|${String(data.type||'')}|${String(data.reason||'')}`;
+                if (sigSet.has(key)) return;
+                list.push({ id: `local-${Math.random().toString(36).slice(2)}`, ...data, dt, sdt, edt, name: nm });
+                sigSet.add(key);
+              } catch {}
+            });
+          } catch {}
           const y = tzNow.getFullYear();
           const m = tzNow.getMonth() + 1;
           const todayYm = `${y}-${String(m).padStart(2,'0')}`;
@@ -5344,9 +5391,32 @@ function hasFullAccessToTab(tab) {
                 if (!canDelete) { alert('不可刪除此申請'); return; }
                 const ok = await confirmAction({ title: '確認刪除', text: '確定要刪除此請假申請嗎？', confirmText: '刪除' });
                 if (!ok) return;
-                await withRetry(() => fns.deleteDoc(fns.doc(db, 'leaveRequests', id)));
+                if (id.startsWith('local-')) {
+                  try {
+                    const raw = localStorage.getItem('pendingLeaves');
+                    const arr = raw ? JSON.parse(raw) : [];
+                    const keyOf = (d) => {
+                      try {
+                        const uid = String(d.uid||'');
+                        const s = d.startAt; const e = d.endAt;
+                        const sdt = typeof s === 'string' ? new Date(s) : (s && typeof s.toDate === 'function' ? s.toDate() : null);
+                        const edt = typeof e === 'string' ? new Date(e) : (e && typeof e.toDate === 'function' ? e.toDate() : null);
+                        const sISO = sdt instanceof Date && !isNaN(sdt) ? sdt.toISOString() : '';
+                        const eISO = edt instanceof Date && !isNaN(edt) ? edt.toISOString() : '';
+                        const t = String(d.type||''); const r = String(d.reason||'');
+                        return `${uid}|${sISO}|${eISO}|${t}|${r}`;
+                      } catch { return ''; }
+                    };
+                    const targetKey = keyOf(rec);
+                    const out = (Array.isArray(arr) ? arr : []).filter((d) => keyOf(d) !== targetKey);
+                    localStorage.setItem('pendingLeaves', JSON.stringify(out));
+                  } catch {}
+                } else {
+                  await withRetry(() => fns.deleteDoc(fns.doc(db, 'leaveRequests', id)));
+                }
                 try { const i = list.findIndex((x) => x.id === id); if (i >= 0) list.splice(i, 1); } catch {}
                 renderForMonth(monthInput.value);
+                try { if (typeof refreshSubtabBadges === 'function') await refreshSubtabBadges(); } catch {}
               }
             } catch (err) { alert(`操作失敗：${err?.message || err}`); }
           });
@@ -6300,6 +6370,7 @@ function hasFullAccessToTab(tab) {
   }
 
   setActiveTab(activeMainTab);
+  try { refreshSubtabBadges(); } catch {}
 
   // 內部功能：定位與打卡
   function initGeolocation() {
@@ -6405,6 +6476,16 @@ emailSignInBtn?.addEventListener("click", async () => {
 // 網路時間初始化
 (async () => { try { await initNetworkTime(); } catch {} })();
 (async () => { try { await ensureServiceWorker(); } catch {} })();
+// 解除推播訂閱
+(async () => {
+  try {
+    const reg = await (navigator.serviceWorker?.getRegistration?.() || Promise.resolve(null));
+    if (reg && reg.pushManager && reg.pushManager.getSubscription) {
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) { try { await sub.unsubscribe(); } catch {} }
+    }
+  } catch {}
+})();
 // 子分頁定義（頁中上）
 const SUB_TABS = {
   home: [],
@@ -6417,11 +6498,7 @@ const SUB_TABS = {
 };
 
 function ensureNotificationPermission() {
-  try {
-    if (!('Notification' in window)) return Promise.resolve(false);
-    if (Notification.permission === 'granted') return Promise.resolve(true);
-    return Notification.requestPermission().then((p) => p === 'granted').catch(() => false);
-  } catch { return Promise.resolve(false); }
+  return Promise.resolve(false);
 }
 
 function ensureServiceWorker() {
@@ -6436,16 +6513,17 @@ function ensureServiceWorker() {
 
 async function refreshSubtabBadges() {
   const btns = Array.from(subTabsEl.querySelectorAll('.subtab-btn'));
-  if (!btns.length) return;
   if (activeMainTab === 'checkin') {
     for (const b of btns) { const badge = b.querySelector('.subtab-badge'); if (badge) badge.remove(); }
   }
   let leavePending = 0;
   let appealPending = 0;
   let makeupPending = 0;
+  let changePending = 0;
   let leaveTw = 0, leaveTy = 0;
   let appealTw = 0, appealTy = 0;
   let makeupTw = 0, makeupTy = 0;
+  let changeTw = 0, changeTy = 0;
   try {
     await ensureNetworkTime();
     await ensureFirebase();
@@ -6476,9 +6554,28 @@ async function refreshSubtabBadges() {
       if (qLeave) {
         const snap = await withRetry(() => fns.getDocs(qLeave));
         leavePending = snap.size || 0;
+        const cloudLeavesSig = new Set();
+        const normDate = (v) => { try { if (typeof v === 'string') { const d = new Date(v); return (d instanceof Date && !isNaN(d)) ? d.toISOString() : ''; } else if (v && typeof v.toDate === 'function') { const d = v.toDate(); return (d instanceof Date && !isNaN(d)) ? d.toISOString() : ''; } } catch {} return ''; };
         if (twUids.size || tyUids.size) {
-          snap.forEach((doc) => { const d = doc.data() || {}; const uid = String(d.uid||''); if (twUids.has(uid)) leaveTw += 1; else if (tyUids.has(uid)) leaveTy += 1; });
+          snap.forEach((doc) => { const d = doc.data() || {}; const uid = String(d.uid||''); const s = normDate(d.startAt); const e = normDate(d.endAt); const t = String(d.type||''); const r = String(d.reason||''); const key = `${uid}|${s}|${e}|${t}|${r}`; cloudLeavesSig.add(key); if (twUids.has(uid)) leaveTw += 1; else if (tyUids.has(uid)) leaveTy += 1; });
         }
+        try {
+          const raw = localStorage.getItem('pendingLeaves');
+          const arr = raw ? JSON.parse(raw) : [];
+          (Array.isArray(arr) ? arr : []).forEach((d) => {
+            const uid = String(d.uid||'');
+            if (!uid) return;
+            const s = normDate(d.startAt);
+            const e = normDate(d.endAt);
+            const t = String(d.type||'');
+            const r = String(d.reason||'');
+            const key = `${uid}|${s}|${e}|${t}|${r}`;
+            if (cloudLeavesSig.has(key)) return;
+            leavePending += 1;
+            if (twUids.has(uid)) leaveTw += 1; else if (tyUids.has(uid)) leaveTy += 1;
+            cloudLeavesSig.add(key);
+          });
+        } catch {}
       }
       const qAppeal = canAll
         ? fns.query(fns.collection(db, 'pointAppeals'), fns.where('state', '==', '送審'))
@@ -6500,6 +6597,16 @@ async function refreshSubtabBadges() {
           snap3.forEach((doc) => { const d = doc.data() || {}; const uid = String(d.uid||''); if (twUids.has(uid)) makeupTw += 1; else if (tyUids.has(uid)) makeupTy += 1; });
         }
       }
+      const qChanges = canAll
+        ? fns.query(fns.collection(db, 'changeRequests'), fns.where('state', '==', '送審'))
+        : (u ? fns.query(fns.collection(db, 'changeRequests'), fns.where('uid', '==', u.uid), fns.where('state', '==', '送審')) : null);
+      if (qChanges) {
+        const snap4 = await withRetry(() => fns.getDocs(qChanges));
+        changePending = snap4.size || 0;
+        if (twUids.size || tyUids.size) {
+          snap4.forEach((doc) => { const d = doc.data() || {}; const uid = String(d.uid||''); if (twUids.has(uid)) changeTw += 1; else if (tyUids.has(uid)) changeTy += 1; });
+        }
+      }
     }
   } catch {}
   const toNotify = [];
@@ -6510,6 +6617,8 @@ async function refreshSubtabBadges() {
     const selCo = companies.find((c) => String(c.id||'') === String(selectedCoId));
     const isLeader = (activeMainTab === 'leader');
     let num = 0;
+    let badge = b.querySelector('.subtab-badge');
+    if (activeMainTab === 'checkin') { if (badge) badge.remove(); continue; }
     if (label === '請假') {
       if (isLeader && selCo) {
         const isTw = /台北/.test(String(selCo.name||''));
@@ -6534,11 +6643,18 @@ async function refreshSubtabBadges() {
       } else {
         num = makeupPending;
       }
+    } else if (label === '紀錄') {
+      if (isLeader && selCo) {
+        const isTw = /台北/.test(String(selCo.name||''));
+        const isTy = /桃園/.test(String(selCo.name||''));
+        num = isTw ? changeTw : (isTy ? changeTy : changePending);
+      } else {
+        num = changePending;
+      }
     }
     const count = Number(num) || 0;
     const prevKey = label + ':' + (isLeader && selCo ? String(selCo.id||'') : 'all');
     const prevCounts = appState.badgesPrev || (appState.badgesPrev = {});
-    let badge = b.querySelector('.subtab-badge');
     if (!count) { if (badge) badge.remove(); prevCounts[prevKey] = 0; continue; }
     if (!badge) { badge = document.createElement('span'); badge.className = 'subtab-badge'; b.appendChild(badge); }
     badge.textContent = String(num);
@@ -6547,32 +6663,31 @@ async function refreshSubtabBadges() {
     prevCounts[prevKey] = count;
   }
   try {
-    const leaderTabBtn = document.querySelector('.app-footer .tab-btn[data-tab="leader"]');
+    const leaderTabBtn = document.querySelector('.tab-btn[data-tab="leader"]');
     if (leaderTabBtn) {
-      const totalPending = Number(leavePending || 0) + Number(appealPending || 0) + Number(makeupPending || 0);
+      const companies2 = Array.isArray(appState.companies) ? appState.companies : [];
+      const selectedCoId2 = appState.leaderCompanyFilter || '';
+      const selCo2 = companies2.find((c) => String(c.id||'') === String(selectedCoId2)) || null;
+      const isTw2 = selCo2 ? /台北/.test(String(selCo2.name||'')) : false;
+      const isTy2 = selCo2 ? /桃園/.test(String(selCo2.name||'')) : false;
+      const leaveCount2 = selCo2 ? (isTw2 ? leaveTw : (isTy2 ? leaveTy : leavePending)) : 0;
+      const appealCount2 = selCo2 ? (isTw2 ? appealTw : (isTy2 ? appealTy : appealPending)) : 0;
+      const makeupCount2 = selCo2 ? (isTw2 ? makeupTw : (isTy2 ? makeupTy : makeupPending)) : 0;
+      const totalPending = Number(leaveCount2 || 0) + Number(appealCount2 || 0) + Number(makeupCount2 || 0);
       const hasMapAnomaly = !!document.querySelector('#leaderStatusTbody .status-flag.bad');
       let badge = leaderTabBtn.querySelector('.subtab-badge');
       if (!totalPending && !hasMapAnomaly) { if (badge) badge.remove(); }
       else {
         if (!badge) { badge = document.createElement('span'); badge.className = 'subtab-badge'; leaderTabBtn.appendChild(badge); }
         badge.textContent = totalPending > 0 ? String(totalPending) : '';
+        const breakdown = `請假:${Number(leaveCount2||0)} 計點:${Number(appealCount2||0)} 補卡:${Number(makeupCount2||0)}`;
+        const tip = totalPending > 0 ? breakdown : '地圖異常';
+        badge.title = tip;
+        badge.setAttribute('aria-label', tip);
       }
     }
   } catch {}
-  if (toNotify.length) {
-    try {
-      const swOk = await ensureServiceWorker();
-      const granted = await ensureNotificationPermission();
-      if (granted) {
-        if (swOk && navigator.serviceWorker && navigator.serviceWorker.ready) {
-          const reg = await navigator.serviceWorker.ready;
-          toNotify.forEach((n) => { try { reg.showNotification('待審核提醒', { body: `${n.label} ${n.count}`, icon: 'favicon.svg' }); } catch {} });
-        } else {
-          toNotify.forEach((n) => { try { new Notification('待審核提醒', { body: `${n.label} ${n.count}`, icon: 'favicon.svg' }); } catch {} });
-        }
-      }
-    } catch {}
-  }
+  if (toNotify.length) {}
 }
 
 let activeSubTab = null;
@@ -7250,7 +7365,7 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
               modifyBtn.style.minHeight = '30px';
               attachPressInteractions(modifyBtn);
               modifyBtn.addEventListener('click', () => {
-                const dtStr2 = `${r.dt.getFullYear()}-${String(r.dt.getMonth()+1).padStart(2,'0')}-${String(r.dt.getDate()).padStart(2,'0')} ${String(r.dt.getHours()).padStart(2,'0')}:${String(r.dt.getMinutes()).padStart(2,'0')}:${String(r.dt.getSeconds()).padStart(2,'0')}`;
+                const dtStr2 = formatDatetimeLocalTZ(r.dt, 'Asia/Taipei');
                 const statusOptions = [
                   { value: '上班', label: '上班' },
                   { value: '下班', label: '下班' },
@@ -7259,17 +7374,17 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
                   { value: '離開', label: '離開' },
                   { value: '返回', label: '返回' },
                 ];
-                openModal({
-                  title: '申請修改打卡紀錄',
-                  fields: [
-                    { key: 'place', label: '打卡位置', type: 'text' },
-                    { key: 'status', label: '狀態', type: 'select', options: statusOptions },
-                    { key: 'datetime', label: '日期時間', type: 'text', placeholder: 'YYYY-MM-DD HH:mm:ss' },
-                  ],
-                  initial: { place: r.locationName || '', status: r.status || '上班', datetime: dtStr2 },
-                  submitText: '送出申請',
-                  refreshOnSubmit: false,
-                  onSubmit: async (data) => {
+                  openModal({
+                    title: '申請修改打卡紀錄',
+                    fields: [
+                      { key: 'place', label: '打卡位置', type: 'text' },
+                      { key: 'status', label: '狀態', type: 'select', options: statusOptions },
+                      { key: 'datetime', label: '日期時間', type: 'datetime-local', step: 60 },
+                    ],
+                    initial: { place: r.locationName || '', status: r.status || '上班', datetime: dtStr2 },
+                    submitText: '送出申請',
+                    refreshOnSubmit: false,
+                    onSubmit: async (data) => {
                     try {
                       await ensureFirebase();
                       const user2 = auth?.currentUser || null;
@@ -7298,7 +7413,7 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
                       alert(`申請失敗：${e?.message || e}`);
                       return false;
                     }
-                  },
+                  }
                 });
               });
 
@@ -7574,6 +7689,13 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
                       v.style.maxHeight = '80vh';
                       v.style.objectFit = 'contain';
                       body.appendChild(v);
+                    },
+                    afterRender: ({ body }) => {
+                      const dtInput = body.querySelector('[data-key="datetime"]');
+                      if (dtInput) {
+                        try { dtInput.readOnly = true; } catch {}
+                        dtInput.addEventListener('click', () => { try { if (typeof dtInput.showPicker === 'function') dtInput.showPicker(); } catch {} });
+                      }
                     }
                   });
                 });
@@ -8319,35 +8441,13 @@ function renderSettingsRoles() {
       panel.appendChild(container);
     }
     if (label === '推播') {
-      const perm = (typeof Notification !== 'undefined') ? Notification.permission : 'unsupported';
       container.innerHTML = `
         <div class="block">
-          <p>瀏覽器通知權限：<span id="notifyStatus">${perm}</span></p>
-          <div class="row"><button class="btn" id="btnRequestNotify">允許通知</button></div>
-          <div class="row"><button class="btn" id="btnTestNotify">測試通知</button></div>
+          <p>瀏覽器通知權限：<span id="notifyStatus">disabled</span></p>
+          <div class="row"><button class="btn" id="btnRequestNotify" disabled>允許通知</button></div>
+          <div class="row"><button class="btn" id="btnTestNotify" disabled>測試通知</button></div>
         </div>
       `;
-      const statusEl = container.querySelector('#notifyStatus');
-      const reqBtn = container.querySelector('#btnRequestNotify');
-      const testBtn = container.querySelector('#btnTestNotify');
-      reqBtn?.addEventListener('click', async () => {
-        const ok = await ensureNotificationPermission();
-        if (statusEl) statusEl.textContent = ok ? 'granted' : ((typeof Notification !== 'undefined') ? Notification.permission : 'unsupported');
-      });
-      testBtn?.addEventListener('click', async () => {
-        try {
-          const reg = await (navigator.serviceWorker?.getRegistration?.() || Promise.resolve(null));
-          if (reg && reg.showNotification) {
-            reg.showNotification('測試通知', { body: '這是測試訊息', icon: 'favicon.svg' });
-          } else if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-            new Notification('測試通知', { body: '這是測試訊息' });
-          } else {
-            alert('尚未取得通知權限或不支援 Notification');
-          }
-        } catch (err) {
-          alert(`發送通知失敗：${err?.message || err}`);
-        }
-      });
     } else {
       container.innerHTML = `<div class="block"><p class="muted">此功能尚未實作</p></div>`;
     }
@@ -8355,33 +8455,12 @@ function renderSettingsRoles() {
 function renderSettingsNotifications() {
   const container = settingsContent;
   if (!container) return;
-  const perm = (typeof Notification !== 'undefined') ? Notification.permission : 'unsupported';
+  const perm = 'disabled';
   container.innerHTML = `
     <div class="block">
       <p>瀏覽器通知權限：<span id="notifyStatus">${perm}</span></p>
-      <div class="row"><button class="btn" id="btnRequestNotify">允許通知</button></div>
-      <div class="row"><button class="btn" id="btnTestNotify">測試通知</button></div>
+      <div class="row"><button class="btn" id="btnRequestNotify" disabled>允許通知</button></div>
+      <div class="row"><button class="btn" id="btnTestNotify" disabled>測試通知</button></div>
     </div>
   `;
-  const statusEl = container.querySelector('#notifyStatus');
-  const reqBtn = container.querySelector('#btnRequestNotify');
-  const testBtn = container.querySelector('#btnTestNotify');
-  reqBtn?.addEventListener('click', async () => {
-    const ok = await ensureNotificationPermission();
-    if (statusEl) statusEl.textContent = ok ? 'granted' : ((typeof Notification !== 'undefined') ? Notification.permission : 'unsupported');
-  });
-  testBtn?.addEventListener('click', async () => {
-    try {
-      const reg = await (navigator.serviceWorker?.getRegistration?.() || Promise.resolve(null));
-      if (reg && reg.showNotification) {
-        reg.showNotification('測試通知', { body: '這是測試訊息', icon: 'favicon.svg' });
-      } else if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-        new Notification('測試通知', { body: '這是測試訊息' });
-      } else {
-        alert('尚未取得通知權限或不支援 Notification');
-      }
-    } catch (err) {
-      alert(`發送通知失敗：${err?.message || err}`);
-    }
-  });
 }
