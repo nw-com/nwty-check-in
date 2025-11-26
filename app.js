@@ -571,6 +571,32 @@ function openModal({ title, fields, initial = {}, submitText = "儲存", onSubmi
         selectAllWrap.appendChild(selectAllChk);
         selectAllWrap.appendChild(document.createTextNode("全部勾選"));
         input.appendChild(selectAllWrap);
+
+        const addAlphaGroup = (prefix, text) => {
+          const wrap = document.createElement("label");
+          wrap.style.display = "flex";
+          wrap.style.alignItems = "center";
+          wrap.style.gap = "6px";
+          const chk = document.createElement("input");
+          chk.type = "checkbox";
+          chk.dataset.selectAll = "true";
+          chk.dataset.prefix = prefix;
+          if (f.readonly) chk.disabled = true;
+          wrap.appendChild(chk);
+          wrap.appendChild(document.createTextNode(text));
+          input.appendChild(wrap);
+          chk.addEventListener("change", (e) => {
+            const boxes = Array.from(input.querySelectorAll('input[type=checkbox]')).filter((c) => c.dataset.selectAll !== "true");
+            boxes.filter((c) => (c.dataset.codePrefix || "") === prefix).forEach((c) => { c.checked = e.target.checked; });
+            if (selectAllChk) {
+              const allChecked = boxes.length > 0 && boxes.every((c) => c.checked);
+              selectAllChk.checked = allChecked;
+            }
+          });
+        };
+        addAlphaGroup("A", "A開頭全部");
+        addAlphaGroup("B", "B開頭全部");
+        addAlphaGroup("C", "C開頭全部");
       }
       const renderOptions = (() => {
         if (f.key === "serviceCommunities") {
@@ -603,6 +629,7 @@ function openModal({ title, fields, initial = {}, submitText = "儲存", onSubmi
         chk.type = "checkbox";
         chk.value = opt.value;
         chk.checked = initialVals.includes(opt.value);
+        if (opt.code) { chk.dataset.codePrefix = String(opt.code).trim().charAt(0).toUpperCase(); }
         if (f.readonly) chk.disabled = true;
         if (selectAllChk) {
           chk.addEventListener("change", () => {
@@ -1773,7 +1800,7 @@ async function importAccountsFromXLSX(file) {
               email: (d.email || "").trim(),
               phone: (d.phone || "").trim(),
               licenses: Array.isArray(d.licenses) ? d.licenses : [],
-              role: "保全",
+              role: "一般",
               companyId: (Array.isArray(d.companyIds) && d.companyIds.length) ? d.companyIds[0] : null,
               serviceCommunities: [],
               status: "待審核",
@@ -5870,6 +5897,23 @@ function hasFullAccessToTab(tab) {
           const tbody = document.getElementById('leaderStatusTbody');
           const map = new maps.Map(mapRoot, { center, zoom: 15, mapTypeId: 'roadmap', disableDefaultUI: true });
           const circle = new maps.Circle({ center, radius, strokeColor: '#ff0000', strokeOpacity: 0.8, strokeWeight: 2, fillColor: '#ff0000', fillOpacity: 0.1, map });
+          mapRoot.style.position = 'relative';
+          const btnCenter = document.createElement('button');
+          btnCenter.type = 'button';
+          btnCenter.className = 'btn btn-grey';
+          btnCenter.textContent = '公司';
+          btnCenter.style.position = 'absolute';
+          btnCenter.style.top = '8px';
+          btnCenter.style.right = '8px';
+          btnCenter.style.zIndex = '10';
+          btnCenter.style.padding = '6px 10px';
+          btnCenter.style.borderRadius = '8px';
+          btnCenter.setAttribute('aria-label', '回到公司中心');
+          mapRoot.appendChild(btnCenter);
+          let initialZoom = 15;
+          btnCenter.addEventListener('click', () => {
+            try { map.panTo(center); if (typeof initialZoom === 'number') map.setZoom(initialZoom); } catch {}
+          });
           const nameByUid = new Map();
           targets.forEach((a) => {
             const nm = a.name || a.email || '使用者';
@@ -5942,6 +5986,7 @@ function hasFullAccessToTab(tab) {
             map.setCenter(center);
             map.setOptions({ maxZoom: 30 });
             map.setZoom(z);
+            initialZoom = z;
           } catch {}
           const formatDT = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
           const rows = [];
