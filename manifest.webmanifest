@@ -1,0 +1,9 @@
+{
+  "short_name": "NW Patrol",
+  "name": "NW Patrol 巡邏打卡系統",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#c1121f",
+  "icons": []
+}
