@@ -160,6 +160,13 @@ button[disabled] { cursor: not-allowed; }
 .table-wrapper { width: 100%; overflow-x: auto; }
 .report-table { border-collapse: collapse; }
 .report-table th, .report-table td { border: 1px solid #d1d5db; }
+.status-icon { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; }
+.status-icon.ok { color: #0f9d58; }
+.status-icon.bad { color: #ef4444; }
+
+@media print {
+  .status-icon { display: none !important; }
+}
 
 @media print {
   @page { size: A4; margin: 12mm; }

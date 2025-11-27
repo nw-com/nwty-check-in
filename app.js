@@ -7599,7 +7599,13 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
             // 班表
             const key = `${date.getFullYear()}-${two(date.getMonth()+1)}-${two(date.getDate())}`;
             const uid = user.uid;
-            const rp = (appState.rosterPlans?.[uid]?.[key]) || null;
+            const id0 = appState.currentUserId || null;
+            const acc = (appState.accounts||[]).find((a) => a.id === id0 || a.uid === uid) || null;
+            const rp = (appState.rosterPlans?.[uid]?.[key])
+                  || (id0 ? (appState.rosterPlans?.[id0]?.[key]) : null)
+                  || (acc?.id ? (appState.rosterPlans?.[acc.id]?.[key]) : null)
+                  || (acc?.uid ? (appState.rosterPlans?.[acc.uid]?.[key]) : null)
+                  || null;
             if (rp && rp.status) return rp.status;
             return defaultRosterStatusForDate(date);
           };
@@ -7623,8 +7629,8 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
               const base = baseStatusForDate(new Date(dayStart));
               const issues = [];
               const isLeader = /主管|管理/.test(String(appState.currentUserRole||''));
-              if (!startAt && !endAt && base!=='請假日') issues.push('曠職');
-              if (!!startAt !== !!endAt) issues.push('未完成打卡流程');
+              if (!startAt && !endAt && base!=='請假日' && base!=='休假日') issues.push('曠職');
+              if (!!startAt !== !!endAt && base!=='請假日' && base!=='休假日') issues.push('未完成打卡流程');
               if (isLeader && startAt && endAt && totalHours < 8.5 && base!=='休假日' && base!=='請假日') issues.push('總時數不足');
               // 遲到/早退（以預設門檻）
               const lateCut = new Date(dayStart); lateCut.setHours(9,10,0,0);
@@ -7632,7 +7638,8 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
               if (startAt && startAt > lateCut && base!=='休假日' && base!=='請假日') issues.push('遲到');
               if (endAt && endAt < offCut && base!=='休假日' && base!=='請假日') issues.push('早退');
               const statusText = issues.length ? `異常：${issues.join('、')}` : `正常：${base}`;
-              rows.push({ date: new Date(dayStart), week: weekday(dayStart), startAt, endAt, totalHours, statusText });
+              const isNormal = issues.length === 0;
+              rows.push({ date: new Date(dayStart), week: weekday(dayStart), startAt, endAt, totalHours, statusText, isNormal });
             }
             const frag = document.createDocumentFragment();
             rows.forEach((r) => {
@@ -7643,7 +7650,13 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
               const td3 = document.createElement('td'); td3.textContent = timeStr(r.startAt) || '';
               const td4 = document.createElement('td'); td4.textContent = timeStr(r.endAt) || '';
               const td5 = document.createElement('td'); td5.textContent = (r.totalHours ? r.totalHours.toFixed(2) : '');
-              const td6 = document.createElement('td'); td6.textContent = r.statusText;
+              const td6 = document.createElement('td');
+              const svgOk = '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="3"/></svg>';
+              const svgBad = '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6 L18 18 M18 6 L6 18" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>';
+              const cls = r.isNormal ? 'ok' : 'bad';
+              const parts = String(r.statusText||'').split('：');
+              const reason = parts.length > 1 ? parts.slice(1).join('：') : '';
+              td6.innerHTML = `<span class="status-icon ${cls}" title="${r.statusText}">${r.isNormal ? svgOk : svgBad}</span><span class="status-reason">： ${reason}</span>`;
               tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3); tr.appendChild(td4); tr.appendChild(td5); tr.appendChild(td6);
               frag.appendChild(tr);
             });
