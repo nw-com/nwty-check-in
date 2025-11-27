@@ -7585,6 +7585,12 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
           if (!monthInput || !tbody) return;
           monthInput.value = todayYm;
           const weekday = (d) => ['日','一','二','三','四','五','六'][d.getDay()];
+          const rosterStatusFromPlan = (v) => {
+            const s = String(v||'');
+            if (s.includes('值班')) return '值班日';
+            if (s.includes('休假')) return '休假日';
+            return '上班日';
+          };
           const baseStatusForDate = (date) => {
             // 優先請假日，其次班表，最後預設
             const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -7597,19 +7603,53 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
             });
             if (leaveHit) return '請假日';
             // 班表
+            try {
+              const rp0 = appState.rosterPlans || {};
+              if (!Object.keys(rp0).length) {
+                const s = localStorage.getItem('rosterPlans');
+                if (s) appState.rosterPlans = JSON.parse(s);
+              }
+            } catch {}
             const key = `${date.getFullYear()}-${two(date.getMonth()+1)}-${two(date.getDate())}`;
             const uid = user.uid;
             const id0 = appState.currentUserId || null;
             const acc = (appState.accounts||[]).find((a) => a.id === id0 || a.uid === uid) || null;
+            const name = acc?.name ? String(acc.name).trim() : null;
+            const email = acc?.email ? String(acc.email).trim() : null;
             const rp = (appState.rosterPlans?.[uid]?.[key])
                   || (id0 ? (appState.rosterPlans?.[id0]?.[key]) : null)
                   || (acc?.id ? (appState.rosterPlans?.[acc.id]?.[key]) : null)
                   || (acc?.uid ? (appState.rosterPlans?.[acc.uid]?.[key]) : null)
+                  || (name ? (appState.rosterPlans?.[name]?.[key]) : null)
+                  || (email ? (appState.rosterPlans?.[email]?.[key]) : null)
                   || null;
-            if (rp && rp.status) return rp.status;
+            if (rp && rp.status) return rosterStatusFromPlan(rp.status);
             return defaultRosterStatusForDate(date);
           };
           const timeStr = (d) => d instanceof Date && !isNaN(d) ? `${two(d.getHours())}:${two(d.getMinutes())}` : '';
+          const rosterPlanOfDate = (date) => {
+            try {
+              const rp0 = appState.rosterPlans || {};
+              if (!Object.keys(rp0).length) {
+                const s = localStorage.getItem('rosterPlans');
+                if (s) appState.rosterPlans = JSON.parse(s);
+              }
+            } catch {}
+            const key = `${date.getFullYear()}-${two(date.getMonth()+1)}-${two(date.getDate())}`;
+            const uid = user.uid;
+            const id0 = appState.currentUserId || null;
+            const acc = (appState.accounts||[]).find((a) => a.id === id0 || a.uid === uid) || null;
+            const name = acc?.name ? String(acc.name).trim() : null;
+            const email = acc?.email ? String(acc.email).trim() : null;
+            const rp = (appState.rosterPlans?.[uid]?.[key])
+                  || (id0 ? (appState.rosterPlans?.[id0]?.[key]) : null)
+                  || (acc?.id ? (appState.rosterPlans?.[acc.id]?.[key]) : null)
+                  || (acc?.uid ? (appState.rosterPlans?.[acc.uid]?.[key]) : null)
+                  || (name ? (appState.rosterPlans?.[name]?.[key]) : null)
+                  || (email ? (appState.rosterPlans?.[email]?.[key]) : null)
+                  || null;
+            return rp || null;
+          };
           const renderMonth = (ymStr) => {
             const parts = String(ymStr||'').split('-'); if (parts.length!==2) return;
             const y = Number(parts[0]); const m = Number(parts[1])-1;
@@ -7627,6 +7667,16 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
               const endAt = endCandidates.sort((a,b)=>b.dt-a.dt)[0]?.dt || null;
               const totalHours = (startAt && endAt) ? ((endAt - startAt)/3600000) : 0;
               const base = baseStatusForDate(new Date(dayStart));
+              const rp = rosterPlanOfDate(new Date(dayStart));
+              const planStart = rp?.startTime || (base==='休假日' || base==='請假日' ? '' : '09:00');
+              const planEnd = rp?.endTime || (base==='休假日' || base==='請假日' ? '' : '17:30');
+              const planHours = (() => {
+                if (!planStart || !planEnd) return 0;
+                const [sh, sm] = String(planStart).split(':').map((x)=>Number(x));
+                const [eh, em] = String(planEnd).split(':').map((x)=>Number(x));
+                const mins = (eh*60+em) - (sh*60+sm);
+                return mins > 0 ? mins/60 : 0;
+              })();
               const issues = [];
               const isLeader = /主管|管理/.test(String(appState.currentUserRole||''));
               if (!startAt && !endAt && base!=='請假日' && base!=='休假日') issues.push('曠職');
@@ -7639,7 +7689,7 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
               if (endAt && endAt < offCut && base!=='休假日' && base!=='請假日') issues.push('早退');
               const statusText = issues.length ? `異常：${issues.join('、')}` : `正常：${base}`;
               const isNormal = issues.length === 0;
-              rows.push({ date: new Date(dayStart), week: weekday(dayStart), startAt, endAt, totalHours, statusText, isNormal });
+              rows.push({ date: new Date(dayStart), week: weekday(dayStart), startAt, endAt, totalHours, statusText, isNormal, planStart, planEnd, planHours });
             }
             const frag = document.createDocumentFragment();
             rows.forEach((r) => {
@@ -7647,9 +7697,9 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
               const ymd = `${r.date.getFullYear()}-${two(r.date.getMonth()+1)}-${two(r.date.getDate())}`;
               const td1 = document.createElement('td'); td1.textContent = ymd;
               const td2 = document.createElement('td'); td2.textContent = `週${r.week}`;
-              const td3 = document.createElement('td'); td3.textContent = timeStr(r.startAt) || '';
-              const td4 = document.createElement('td'); td4.textContent = timeStr(r.endAt) || '';
-              const td5 = document.createElement('td'); td5.textContent = (r.totalHours ? r.totalHours.toFixed(2) : '');
+              const td3 = document.createElement('td'); td3.innerHTML = `<div>班 : ${r.planStart || ''}</div><div>實 : ${timeStr(r.startAt) || ''}</div>`;
+              const td4 = document.createElement('td'); td4.innerHTML = `<div>班 : ${r.planEnd || ''}</div><div>實 : ${timeStr(r.endAt) || ''}</div>`;
+              const td5 = document.createElement('td'); td5.innerHTML = `<div>班 : ${r.planHours ? r.planHours.toFixed(2)+' 小時' : ''}</div><div>實 : ${r.totalHours ? r.totalHours.toFixed(2)+' 小時' : ''}</div>`;
               const td6 = document.createElement('td');
               const svgOk = '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="3"/></svg>';
               const svgBad = '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6 L18 18 M18 6 L6 18" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>';
@@ -7657,6 +7707,11 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
               const parts = String(r.statusText||'').split('：');
               const reason = parts.length > 1 ? parts.slice(1).join('：') : '';
               td6.innerHTML = `<span class="status-icon ${cls}" title="${r.statusText}">${r.isNormal ? svgOk : svgBad}</span><span class="status-reason">： ${reason}</span>`;
+              const t = nowInTZ('Asia/Taipei');
+              const isFuture = (r.date.getFullYear() > t.getFullYear()) ||
+                               (r.date.getFullYear() === t.getFullYear() && r.date.getMonth() > t.getMonth()) ||
+                               (r.date.getFullYear() === t.getFullYear() && r.date.getMonth() === t.getMonth() && r.date.getDate() > t.getDate());
+              if (isFuture) { td3.innerHTML = ''; td4.innerHTML = ''; td5.innerHTML = ''; td6.innerHTML = ''; }
               tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3); tr.appendChild(td4); tr.appendChild(td5); tr.appendChild(td6);
               frag.appendChild(tr);
             });
