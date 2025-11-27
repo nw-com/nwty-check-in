@@ -7579,15 +7579,53 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
                 <tbody id="reportBody"></tbody>
               </table>
             </div>
+            <div class="table-wrapper" style="margin-top: 8px;">
+              <table class="table report-table" id="reportSummaryTable">
+                <thead><tr>
+                  <th>出勤</th>
+                  <th>遲到</th>
+                  <th>早退</th>
+                  <th>病假</th>
+                  <th>事假</th>
+                  <th>其他假別</th>
+                  <th>休假日上班</th>
+                  <th>特休日</th>
+                </tr></thead>
+                <tbody id="reportSummaryBody">
+                  <tr id="summaryDaysRow"></tr>
+                  <tr id="summaryHoursRow"></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="table-wrapper" style="margin-top: 8px;">
+              <table class="table report-table" id="reportSignTable">
+                <thead><tr>
+                  <th>總經理</th>
+                  <th>人事</th>
+                  <th>主管</th>
+                  <th>本人</th>
+                </tr></thead>
+                <tbody>
+                  <tr>
+                    <td style="height: 64px;"></td>
+                    <td style="height: 64px;"></td>
+                    <td style="height: 64px;"></td>
+                    <td style="height: 64px;"></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           `;
           const monthInput = container.querySelector('#reportMonth');
           const tbody = container.querySelector('#reportBody');
+          const sumBody = container.querySelector('#reportSummaryBody');
           const btnPrint = container.querySelector('#btnPrintReport');
           if (!monthInput || !tbody) return;
           monthInput.value = todayYm;
           const weekday = (d) => ['日','一','二','三','四','五','六'][d.getDay()];
           const rosterStatusFromPlan = (v) => {
             const s = String(v||'');
+            if (s.includes('特休')) return '特休日';
             if (s.includes('值班')) return '值班日';
             if (s.includes('休假')) return '休假日';
             return '上班日';
@@ -7719,7 +7757,7 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
               const cls = r.isNormal ? 'ok' : 'bad';
               const parts = String(r.statusText||'').split('：');
               const reason = parts.length > 1 ? parts.slice(1).join('：') : '';
-              td7.innerHTML = `<span class="status-icon ${cls}" title="${r.statusText}">${r.isNormal ? svgOk : svgBad}</span><span class="status-reason">： ${reason}</span>`;
+              td7.innerHTML = `<span class="status-icon ${cls}" title="${r.statusText}">${r.isNormal ? '○' : '╳'}</span><span class="status-reason">： ${reason}</span>`;
               const isOffOrLeave = /休假日|請假日/.test(String(reason||''));
               if (isOffOrLeave) { td3.innerHTML = ''; td4.innerHTML = ''; td5.innerHTML = ''; td6.textContent = ''; }
               const t = nowInTZ('Asia/Taipei');
@@ -7731,6 +7769,29 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
               frag.appendChild(tr);
             });
             tbody.innerHTML = ''; tbody.appendChild(frag);
+            const sum = { attendDays: 0, attendHours: 0, lateDays: 0, lateHours: 0, earlyDays: 0, earlyHours: 0, sickDays: 0, sickHours: 0, personalDays: 0, personalHours: 0, otherLeaveDays: 0, otherLeaveHours: 0, offWorkDays: 0, offWorkHours: 0, specialOffDays: 0, specialOffHours: 0 };
+            rows.forEach((r) => {
+              const parts = String(r.statusText||'').split('：');
+              const reason = parts.length > 1 ? parts.slice(1).join('：') : '';
+              const onLeave = /請假日/.test(reason);
+              const onOff = /休假日/.test(reason);
+              const onSpecialOff = /特休日/.test(reason);
+              const hasStart = !!r.startAt; const hasEnd = !!r.endAt;
+              const completed = hasStart && hasEnd && !onLeave && !onOff;
+              if (completed) { sum.attendDays += 1; sum.attendHours += Number(r.totalHours||0); }
+              if (/遲到/.test(String(r.statusText||''))) { sum.lateDays += 1; sum.lateHours += Number(r.totalHours||0); }
+              if (/早退/.test(String(r.statusText||''))) { sum.earlyDays += 1; sum.earlyHours += Number(r.totalHours||0); }
+              if (onLeave) { sum.otherLeaveDays += 1; }
+              if (onOff && (hasStart || hasEnd)) { sum.offWorkDays += 1; sum.offWorkHours += Number(r.totalHours||0); }
+              if (onSpecialOff) { sum.specialOffDays += 1; if (hasStart || hasEnd) sum.specialOffHours += Number(r.totalHours||0); }
+            });
+            const days = [sum.attendDays, sum.lateDays, sum.earlyDays, sum.sickDays, sum.personalDays, sum.otherLeaveDays, sum.offWorkDays, sum.specialOffDays];
+            const hours = [sum.attendHours, sum.lateHours, sum.earlyHours, sum.sickHours, sum.personalHours, sum.otherLeaveHours, sum.offWorkHours, sum.specialOffHours].map((n)=> (n ? n.toFixed(2)+' 小時' : ''));
+            if (sumBody) {
+              const r1 = document.createElement('tr'); r1.innerHTML = days.map((n)=>`<td>${n}</td>`).join('');
+              const r2 = document.createElement('tr'); r2.innerHTML = hours.map((t)=>`<td>${t}</td>`).join('');
+              sumBody.innerHTML = ''; sumBody.appendChild(r1); sumBody.appendChild(r2);
+            }
           };
           renderMonth(todayYm);
           monthInput.addEventListener('change', () => renderMonth(monthInput.value));
@@ -7746,6 +7807,16 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
                 const tds = Array.from(tr.querySelectorAll('td')).map((td) => td.textContent || '');
                 return `<tr>${tds.map((t)=>`<td>${t}</td>`).join('')}</tr>`;
               }).join('');
+              const summaryTable = container.querySelector('#reportSummaryTable');
+              const sumHeadCells = Array.from(summaryTable?.querySelectorAll('thead th')||[]).map((th)=> th.textContent || '');
+              const sumRows = Array.from(summaryTable?.querySelectorAll('tbody tr')||[]).map((tr)=> Array.from(tr.querySelectorAll('td')).map((td)=> td.textContent || ''));
+              const sumHeadHtml = sumHeadCells.length ? `<tr>${sumHeadCells.map((t)=>`<th>${t}</th>`).join('')}</tr>` : '';
+              const sumBodyHtml = sumRows.map((row)=>`<tr>${row.map((t)=>`<td>${t}</td>`).join('')}</tr>`).join('');
+              const signTable = container.querySelector('#reportSignTable');
+              const signHeadCells = Array.from(signTable?.querySelectorAll('thead th')||[]).map((th)=> th.textContent || '');
+              const signRows = Array.from(signTable?.querySelectorAll('tbody tr')||[]).map((tr)=> Array.from(tr.querySelectorAll('td')).map((td)=> td.textContent || ''));
+              const signHeadHtml = signHeadCells.length ? `<tr>${signHeadCells.map((t)=>`<th>${t}</th>`).join('')}</tr>` : '';
+              const signBodyHtml = signRows.map((row)=>`<tr>${row.map((t)=>`<td style=\"height:64px;\">${t}</td>`).join('')}</tr>`).join('');
               const html = `<!doctype html><html><head><meta charset="utf-8"><title>個人出勤紀錄表</title>
               <style>
               @page { size: A4; margin: 12mm; }
@@ -7762,6 +7833,8 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
               <table><thead><tr>
               <th>日期</th><th>週</th><th>上班打卡時間</th><th>下班打卡時間</th><th>總上班時數</th><th>判定工時</th><th>狀態</th>
               </tr></thead><tbody>${rowsHtml}</tbody></table>
+              <table>${sumHeadHtml}${sumBodyHtml ? `<tbody>${sumBodyHtml}</tbody>` : ''}</table>
+              <table>${signHeadHtml}${signBodyHtml ? `<tbody>${signBodyHtml}</tbody>` : ''}</table>
               </body></html>`;
               const w = window.open('', '_blank');
               if (!w) return;
