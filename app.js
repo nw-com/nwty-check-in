@@ -3616,15 +3616,7 @@ let ensureFirebasePromise = null;
           if (homeStatusEl) renderHomeStatusText(summary);
           setLastCheckin(user.uid, { summary, key: mapLabelToKey(label), label });
         } else {
-          const rest = await fetchLastCheckinViaRest(user.uid);
-          if (rest) {
-            const label = rest.status || '';
-            setHomeStatus(mapLabelToKey(label), label);
-            if (homeStatusEl) renderHomeStatusText(rest.summary || '');
-            setLastCheckin(user.uid, { summary: rest.summary || '', key: mapLabelToKey(label), label });
-          } else {
-            if (homeStatusEl) homeStatusEl.textContent = '';
-          }
+          if (homeStatusEl) homeStatusEl.textContent = '';
         }
       } catch {}
 
