@@ -115,7 +115,6 @@
           <div class="stack-row row-c"><div id="homeTime" class="stack-text time"></div></div>
           <div class="stack-row row-d"><div id="homeHeaderName" class="stack-text name"></div></div>
           <div class="stack-row row-e"></div>
-          <div class="stack-row row-e"><div id="netIndicatorHome" class="net-indicator" aria-label="網路狀態" title="網路狀態"><svg class="wifi" width="22" height="22" viewBox="0 0 24 24" xmlns="http://www.w3.org/200/svg" aria-hidden="true"><path class="wifi-wave wave1" d="M3 8 C 8 4, 16 4, 21 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path class="wifi-wave wave2" d="M6 11 C 9 9, 15 9, 18 11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path class="wifi-wave wave3" d="M9 14 C 11 13, 13 13, 15 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle class="wifi-dot" cx="12" cy="17" r="2" fill="currentColor"/></svg></div></div>
         </div>
       </header>
 
@@ -125,9 +124,9 @@
       </div>
 
       <!-- 首頁大圖（僅首頁顯示，置於頁首與頁中之間） -->
-      <div id="homeHero" class="home-hero hidden">
-        <img id="homeHeroPhoto" class="home-hero-photo" alt="使用者照片" />
-      </div>
+          <div id="homeHero" class="home-hero hidden">
+            <img id="homeHeroPhoto" class="home-hero-photo" alt="使用者照片" />
+          </div>
       
 
       <!-- 頁中：70% 高 -->
@@ -137,7 +136,10 @@
           <!-- 首頁：頁中 F–K（總高 50vh） -->
           <div id="homeMidStack" class="home-mid-stack">
             <!-- F：顯示大照片的下方 50%（16vh） -->
-            <div class="mid-row row-f"></div>
+            <div class="mid-row row-f">
+              <div id="homeRosterLabel"></div>
+              <div id="netIndicatorHome" class="net-indicator" aria-label="網路狀態" title="網路狀態"><svg class="wifi" width="22" height="22" viewBox="0 0 24 24" xmlns="http://www.w3.org/200/svg" aria-hidden="true"><path class="wifi-wave wave1" d="M3 8 C 8 4, 16 4, 21 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path class="wifi-wave wave2" d="M6 11 C 9 9, 15 9, 18 11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path class="wifi-wave wave3" d="M9 14 C 11 13, 13 13, 15 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle class="wifi-dot" cx="12" cy="17" r="2" fill="currentColor"/></svg></div>
+            </div>
             <!-- G：狀態顯示（字體 4vh） -->
             <div class="mid-row row-g">
               <div id="homeStatus" class="status-text" aria-live="polite"></div>

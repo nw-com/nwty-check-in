@@ -367,6 +367,8 @@ button[disabled] { cursor: not-allowed; }
 .home-layout .home-mid-stack .row-f .status-label.work { color: #000 !important; }
 .home-layout .home-mid-stack .row-f .status-label.arrive { color: #6b4e00 !important; }
 .home-layout .home-mid-stack .row-f .status-label.off { color: #9ca3af !important; }
+/* 首頁：F 列改為上下排列，Wi‑Fi 置於底部置中 */
+.home-layout .home-mid-stack .row-f { display: grid; grid-template-rows: 1fr auto; place-items: center; }
 
 /* 表格中的狀態標籤字級與字重與儲存格一致 */
 .table .status-label { font-size: inherit; font-weight: inherit; }
@@ -468,7 +470,7 @@ body.status-leave-request { --hero-pulse-rgb: 245,124,0; }
 
 /* 首頁：A/B/C/D/E 堆疊容器（置於地圖上方） */
 .home-layout .home-header-stack {
-  position: absolute; inset: 0; height: 40vh; pointer-events: none; z-index: 1200;
+  position: absolute; inset: 0; height: 40vh; pointer-events: none; z-index: 2300;
   display: grid;
   grid-template-rows: 5vh 5vh 7vh 7vh 16vh;
 }
