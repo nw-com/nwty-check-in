@@ -47,6 +47,7 @@ const togglePasswordIcon = document.getElementById("togglePasswordIcon");
 
 const userNameEl = document.getElementById("userName");
 const userPhotoEl = document.getElementById("userPhoto");
+const netIndicator = document.getElementById("netIndicator");
 const subTabsEl = document.getElementById("subTabs");
 const homeHero = document.getElementById("homeHero");
 const homeHeroPhoto = document.getElementById("homeHeroPhoto");
@@ -101,9 +102,14 @@ try {
   };
 } catch {}
 
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch(() => {});
+}
+
 let isLoadingCheckins = false;
 let firebaseInitialized = false;
 let authListenerAttached = false;
+let netListenerAttached = false;
 
 function updateHomeMap() {
   if (!homeMapImg || !lastCoords) return;
@@ -978,6 +984,7 @@ function setLastCheckin(uid, payload) {
     if (!uid) return;
     const key = `lastCheckin:${uid}`;
     localStorage.setItem(key, JSON.stringify(payload));
+    localStorage.setItem('lastCheckin:any', JSON.stringify(payload));
   } catch {}
 }
 
@@ -986,6 +993,13 @@ function getLastCheckin(uid) {
     if (!uid) return null;
     const key = `lastCheckin:${uid}`;
     const v = localStorage.getItem(key);
+    return v ? JSON.parse(v) : null;
+  } catch { return null; }
+}
+
+function getLastCheckinAny() {
+  try {
+    const v = localStorage.getItem('lastCheckin:any');
     return v ? JSON.parse(v) : null;
   } catch { return null; }
 }
@@ -6417,6 +6431,22 @@ function hasFullAccessToTab(tab) {
   }
 
   setActiveTab(activeMainTab);
+  renderNetworkIndicator();
+  if (!netListenerAttached) {
+    window.addEventListener('online', renderNetworkIndicator);
+    window.addEventListener('offline', renderNetworkIndicator);
+    netListenerAttached = true;
+  }
+  if (!navigator.onLine) {
+    appView.classList.remove('hidden');
+    const cachedAny = getLastCheckinAny();
+    if (cachedAny && homeStatusEl) {
+      const key = cachedAny.key || 'work';
+      const label = cachedAny.label || '上班';
+      setHomeStatus(key, label);
+      homeStatusEl.textContent = cachedAny.summary || '';
+    }
+  }
   try { refreshSubtabBadges(); } catch {}
 
   // 內部功能：定位與打卡
@@ -8520,4 +8550,10 @@ function renderSettingsNotifications() {
       <div class="row"><button class="btn" id="btnTestNotify" disabled>測試通知</button></div>
     </div>
   `;
+}
+function renderNetworkIndicator() {
+  if (!netIndicator) return;
+  netIndicator.className = "net-indicator " + (navigator.onLine ? "net-online" : "net-offline");
+  netIndicator.setAttribute("title", navigator.onLine ? "有網路" : "無網路");
+  netIndicator.setAttribute("aria-label", navigator.onLine ? "有網路" : "無網路");
 }

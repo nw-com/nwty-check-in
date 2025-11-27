@@ -79,6 +79,16 @@ body {
 .header-icon { width: 28px; height: 28px; display: grid; place-items: center; }
 .system-name { font-weight: 700; font-size: 16px; color: inherit; }
 .header-right { display: flex; align-items: center; gap: 10px; color: inherit; }
+.net-indicator { width: 22px; height: 22px; display: grid; place-items: center; }
+.net-indicator .wifi { width: 22px; height: 22px; display: block; }
+.net-online .wifi { color: #0f9d58; }
+.net-offline .wifi { color: #9ca3af; }
+
+@keyframes wavePulse { 0%,100% { opacity: 0.35; } 50% { opacity: 1; } }
+.net-online .wifi-wave.wave1 { animation: wavePulse 1.2s infinite; }
+.net-online .wifi-wave.wave2 { animation: wavePulse 1.2s infinite .15s; }
+.net-online .wifi-wave.wave3 { animation: wavePulse 1.2s infinite .3s; }
+.net-offline .wifi-wave { opacity: 0.35; animation: none; }
 .user-name { font-size: 14px; color: inherit; }
 .user-photo { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; background: #e5e7eb; border: 2px solid #ffffff; }
 /* 將頭像作為可點擊按鈕 */
