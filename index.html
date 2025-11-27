@@ -1,262 +1,296 @@
 <!doctype html>
 <html lang="zh-Hant">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>NW Patrol</title>
-  <link rel="manifest" href="manifest.webmanifest">
-  <link rel="icon" href="logo.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="styles.css">
-  <meta name="theme-color" content="#c1121f">
-</head>
-<body>
-  <header class="app-header">
-    <div class="brand">
-      <span class="logo" aria-hidden="true"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" fill="#c1121f"/><path d="M7 12l3 3 7-7" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-      <h1>巡邏打卡系統</h1>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>西北打卡系統</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <!-- 設定提示（未填 Firebase / Maps 金鑰時顯示）-->
+    <div id="setup-warning" class="setup-warning hidden">
+      <div class="setup-card">
+        <h2>請完成最後的設定步驟</h2>
+        <p>
+          系統偵測到您尚未設定 Firebase 或 Google Maps 的 API 金鑰。<br />
+          這不是程式錯誤，而是必要的設定。基於安全考量，我無法為您產生金鑰，您必須親自完成此設定。<br />
+          請打開 <code>app.js</code> 檔案，找到 <code>FIREBASE_CONFIG</code>，並依照註解指示填入金鑰。<br />
+          詳細步驟請參考 <code>README.md</code> 檔案。
+          若登入仍失敗，請到 Firebase Console → Authentication → Settings → Authorized domains，加入 <code>localhost</code> 和 <code>127.0.0.1</code>（包含您使用的連接埠）。
+        </p>
+      </div>
     </div>
-    <div class="user-state">
-      <span id="userEmail"></span>
-      <button id="btnLogout" class="btn outline">登出</button>
-    </div>
-  </header>
-  <nav class="tabs">
-    <button data-tab="login" class="tab active">登入</button>
-    <button data-tab="home" class="tab">首頁</button>
-    <button data-tab="scan" class="tab">掃描</button>
-    <button data-tab="points" class="tab">巡邏點</button>
-    <button data-tab="history" class="tab">記錄</button>
-    <button data-tab="settings" class="tab">設定</button>
-  </nav>
 
-  <main>
-    <section id="tab-login" class="panel active">
-      <div class="card">
-        <h2>帳號登入</h2>
-        <div class="grid">
-          <div class="input-topbar"><label class="remember"><input id="loginRemember" type="checkbox"> 記住我</label></div>
-          <div class="input-wrap">
-            <span class="icon" aria-hidden="true">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M4 6h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2zm0 0l8 6 8-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            </span>
-            <input id="loginEmail" type="email" placeholder="Email">
+    <!-- 登入頁（風格對齊示意圖） -->
+    <div id="login-view" class="login-view">
+      <div class="login-card">
+        <div class="brand">
+          <div class="brand-icon" aria-hidden="true">
+            <!-- Clock icon（與主頁左側 LOGO 一致） -->
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" />
+              <path d="M12 6v6l4 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
           </div>
+          <div class="brand-text">
+            <div class="brand-title">西北打卡系統</div>
+            <div class="brand-subtitle">雲端進化版V1</div>
+          </div>
+        </div>
+
+        <div class="login-form">
+          <div class="form-head">
+            <label class="label">電子郵件</label>
+            <label class="remember">
+              <input id="rememberMe" type="checkbox" />
+              <span>記住我</span>
+            </label>
+          </div>
+          <input id="emailInput" type="email" class="input" placeholder="nwapp.eason@gmail.com" />
+          <label class="label">密碼</label>
           <div class="input-wrap">
-            <span class="icon" aria-hidden="true">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M6 10V8a6 6 0 1 1 12 0v2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><rect x="5" y="10" width="14" height="10" rx="2" stroke="currentColor" stroke-width="2"/></svg>
-            </span>
-            <input id="loginPassword" type="password" placeholder="密碼">
-            <button id="togglePassword" type="button" class="input-action" aria-label="顯示/隱藏">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/></svg>
+            <input id="passwordInput" type="password" class="input" placeholder="請輸入密碼" />
+            <button id="togglePassword" type="button" class="icon-btn" aria-label="顯示/隱藏密碼">
+              <!-- Eye-off icon -->
+              <svg id="togglePasswordIcon" width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6Z" stroke="currentColor" stroke-width="2" fill="none"/>
+                <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2" fill="none"/>
+                <line x1="4" y1="4" x2="20" y2="20" stroke="currentColor" stroke-width="2"/>
+              </svg>
             </button>
           </div>
-          <button id="btnLogin" class="btn">登入</button>
-        </div>
-      </div>
-    </section>
-
-    <section id="tab-home" class="panel">
-      <div class="card">
-        <h2>首頁</h2>
-        <div class="grid">
-          <div class="row">
-            <button id="goScan" class="btn">前往掃描</button>
-            <button id="goPoints" class="btn ghost">管理巡邏點</button>
-            <button id="goHistory" class="btn outline">查看記錄</button>
+          <div class="login-actions">
+            <button id="emailSignIn" class="btn btn-primary">登入</button>
           </div>
-          <div class="row">
-            <button id="btnQuickSync" class="btn">立即同步</button>
+          <div class="login-secondary">
+            <button id="applyAccountBtn" class="btn btn-ghost">帳號申請</button>
           </div>
-        </div>
-      </div>
-      <div class="card">
-        <h2>概況</h2>
-        <div class="list">
-          <div class="item"><span>巡邏點數</span><strong id="homePointsCount">0</strong></div>
-          <div class="item"><span>打卡筆數</span><strong id="homeCheckinsCount">0</strong></div>
-          <div class="item"><span>待同步筆數</span><strong id="homePendingCount">0</strong></div>
-        </div>
-      </div>
-    </section>
-
-    <section id="tab-scan" class="panel">
-      <div class="card">
-        <h2>掃描 QR / NFC</h2>
-        <div class="grid">
-          <video id="camera" playsinline></video>
-          <div class="row">
-            <button id="btnStartScan" class="btn">啟動相機掃描</button>
-            <button id="btnStopScan" class="btn outline">停止</button>
-          </div>
-          <div class="row">
-            <button id="btnStartNFC" class="btn ghost">啟動 NFC</button>
-          </div>
-          <input id="manualCode" placeholder="手動輸入巡邏點代碼">
-          <button id="btnUseCode" class="btn">使用代碼</button>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2>打卡與拍照</h2>
-        <div class="grid">
-          <input id="currentPointName" disabled placeholder="巡邏點">
-          <textarea id="taskNote" placeholder="任務執行紀錄"></textarea>
-          <input id="photoInput" type="file" accept="image/*" capture="environment">
-          <button id="btnCheckin" class="btn">打卡</button>
-        </div>
-        <p id="scanStatus" class="status"></p>
-      </div>
-    </section>
-
-    <section id="tab-points" class="panel">
-      <div class="card">
-        <h2>巡邏點管理</h2>
-        <div class="grid">
-          <input id="pointName" placeholder="名稱">
-          <input id="pointCode" placeholder="QR/NFC 代碼">
-          <button id="btnAddPoint" class="btn">新增巡邏點</button>
-        </div>
-        <div class="list" id="pointsList"></div>
-      </div>
-    </section>
-
-    <section id="tab-history" class="panel">
-      <div class="card">
-        <h2>打卡記錄</h2>
-        <div class="toolbar">
-          <button id="btnSync" class="btn">同步到雲端</button>
-          <span id="syncStatus" class="status"></span>
-        </div>
-        <div class="list" id="historyList"></div>
-      </div>
-    </section>
-
-    <section id="tab-settings" class="panel">
-      <div class="card">
-        <h2>帳號列表</h2>
-        <div class="toolbar">
-          <button id="btnOpenAccount" class="btn">新增帳號</button>
-        </div>
-        <div class="table accounts-table">
-          <div class="list head" id="accountsHead">
-            <div class="col">角色</div>
-            <div class="col">姓名</div>
-            <div class="col">手機號碼</div>
-            <div class="col">電子郵件</div>
-            <div class="col">服務社區</div>
-            <div class="col">操作</div>
-          </div>
-          <div class="list" id="accountsList"></div>
-        </div>
-      </div>
-      <div class="card">
-        <h2>社區列表</h2>
-        <div class="toolbar">
-          <button id="btnOpenCommunity" class="btn">新增社區</button>
-        </div>
-        <div class="table communities-table">
-          <div class="list head" id="communitiesHead">
-            <div class="col">社區代號</div>
-            <div class="col">社區名稱</div>
-            <div class="col">區域</div>
-            <div class="col">操作</div>
-          </div>
-          <div class="list" id="communitiesList"></div>
-        </div>
-      </div>
-      <div class="card">
-        <h2>巡邏任務列表</h2>
-        <div class="toolbar">
-          <button id="btnOpenTask" class="btn">新增任務</button>
-        </div>
-        <div class="table tasks-table">
-          <div class="list head" id="tasksHead">
-            <div class="col">社區代號</div>
-            <div class="col">社區名稱</div>
-            <div class="col">巡邏任務代號</div>
-            <div class="col">巡邏任務名稱</div>
-            <div class="col">任務時間</div>
-            <div class="col">頻率</div>
-            <div class="col">巡邏點</div>
-            <div class="col">操作</div>
-          </div>
-          <div class="list" id="tasksList"></div>
-        </div>
-      </div>
-    </section>
-
-    <div id="modalCommunity" class="modal hidden">
-      <div class="dialog">
-        <h3>社區資料</h3>
-        <div class="grid">
-          <input id="mCommCode" placeholder="社區代號">
-          <input id="mCommName" placeholder="社區名稱">
-          <select id="mCommArea">
-            <option value="台北">台北</option>
-            <option value="新北">新北</option>
-            <option value="桃園">桃園</option>
-          </select>
-          <button id="btnSaveCommunity" class="btn">儲存</button>
-          <button id="btnCancelCommunity" class="btn outline">取消</button>
         </div>
       </div>
     </div>
 
-    <div id="modalAccount" class="modal hidden">
-      <div class="dialog">
-        <h3>帳號資料</h3>
-        <div class="grid">
-          <select id="mAccRole">
-            <option value="系統管理員">系統管理員</option>
-            <option value="主管">主管</option>
-            <option value="勤務">勤務</option>
-            <option value="保全">保全</option>
-          </select>
-          <input id="mAccName" placeholder="姓名">
-          <input id="mAccPhone" placeholder="手機號碼">
-          <input id="mAccEmail" type="email" placeholder="電子郵件">
-          <div class="row"><label><input type="checkbox" id="mSelectAllComms"> 全選社區</label></div>
-          <div id="mServiceComms" class="checks"></div>
-          <button id="btnSaveAccount" class="btn">儲存</button>
-          <button id="btnCancelAccount" class="btn outline">取消</button>
+    <!-- 主頁（登入後顯示） -->
+    <div id="app-view" class="app-view hidden">
+      <!-- 頁首：10% 高，固定頂部、最上層 -->
+      <header class="app-header">
+        <!-- 首頁：地圖覆蓋層（置於 header 背景上方、文字下方） -->
+        <div id="homeMapOverlay" class="home-map-overlay hidden" aria-hidden="true">
+          <img id="homeMapImg" alt="目前位置地圖" />
         </div>
-      </div>
-    </div>
-    <div id="modalTask" class="modal hidden">
-      <div class="dialog">
-        <h3>巡邏任務</h3>
-        <div class="grid">
-          <select id="mTaskCommunity"></select>
-          <input id="mTaskCode" placeholder="巡邏任務代號">
-          <input id="mTaskName" placeholder="巡邏任務名稱">
-          <input id="mTaskTimeStart" type="time" placeholder="開始時間">
-          <input id="mTaskTimeEnd" type="time" placeholder="結束時間">
-          <div class="row"><label><input type="checkbox" id="mTaskAllWeek"> 整週</label></div>
-          <div class="checks" id="mTaskDays"></div>
-          <input id="mTaskPointCount" type="number" min="1" placeholder="巡邏點數量">
-          <div class="row"><button id="btnOpenTaskPoints" class="btn">巡邏點(0)</button></div>
-          <button id="btnSaveTask" class="btn">儲存</button>
-          <button id="btnCancelTask" class="btn outline">取消</button>
-        </div>
-      </div>
-    </div>
-    <div id="modalTaskPoints" class="modal hidden">
-      <div class="dialog">
-        <h3>巡邏點</h3>
-        <div id="taskPointsContainer" class="list"></div>
-        <div class="row">
-          <button id="btnSaveTaskPoints" class="btn">儲存</button>
-          <button id="btnCancelTaskPoints" class="btn outline">取消</button>
-        </div>
-      </div>
-    </div>
-  </main>
 
-  <footer class="app-footer">
-    <span>NW Patrol • 離線可用 • GitHub Pages</span>
-    <span id="networkStatus"></span>
-  </footer>
+        <div class="header-left">
+          <div class="header-icon" aria-hidden="true">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" />
+              <path d="M12 6v6l4 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </div>
+          <span class="system-name">西北打卡系統</span>
+        </div>
+        <div class="header-right">
+          <div id="netIndicator" class="net-indicator" aria-label="網路狀態" title="網路狀態">
+            <svg class="wifi" width="22" height="22" viewBox="0 0 24 24" xmlns="http://www.w3.org/200/svg" aria-hidden="true">
+              <path class="wifi-wave wave1" d="M3 8 C 8 4, 16 4, 21 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              <path class="wifi-wave wave2" d="M6 11 C 9 9, 15 9, 18 11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              <path class="wifi-wave wave3" d="M9 14 C 11 13, 13 13, 15 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              <circle class="wifi-dot" cx="12" cy="17" r="2" fill="currentColor"/>
+            </svg>
+          </div>
+          <span id="userName" class="user-name">未登入</span>
+          <img id="userPhoto" class="user-photo" alt="使用者照片" />
+        </div>
+        <!-- 首頁：A/B/C/D/E 堆疊（置於地圖上方） -->
+        <div id="homeHeaderStack" class="home-header-stack hidden" aria-hidden="true">
+          <div class="stack-row row-a">
+            <div class="stack-text logo">
+              <svg class="logo-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" />
+                <path d="M12 6v6l4 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              <span class="logo-title">西北打卡系統</span>
+            </div>
+          </div>
+          <div class="stack-row row-b"><div id="homeDate" class="stack-text date"></div></div>
+          <div class="stack-row row-c"><div id="homeTime" class="stack-text time"></div></div>
+          <div class="stack-row row-d"><div id="homeHeaderName" class="stack-text name"></div></div>
+          <div class="stack-row row-e"></div>
+          <div class="stack-row row-e"><div id="netIndicatorHome" class="net-indicator" aria-label="網路狀態" title="網路狀態"><svg class="wifi" width="22" height="22" viewBox="0 0 24 24" xmlns="http://www.w3.org/200/svg" aria-hidden="true"><path class="wifi-wave wave1" d="M3 8 C 8 4, 16 4, 21 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path class="wifi-wave wave2" d="M6 11 C 9 9, 15 9, 18 11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path class="wifi-wave wave3" d="M9 14 C 11 13, 13 13, 15 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle class="wifi-dot" cx="12" cy="17" r="2" fill="currentColor"/></svg></div></div>
+        </div>
+      </header>
 
-  <script type="module" src="app.js"></script>
-</body>
-</html>
+      <!-- 頁中上：10% 高，固定於頁首下方、最上層 -->
+      <div class="app-subheader">
+        <div id="subTabs" class="subheader-tabs"></div>
+      </div>
+
+      <!-- 首頁大圖（僅首頁顯示，置於頁首與頁中之間） -->
+      <div id="homeHero" class="home-hero hidden">
+        <img id="homeHeroPhoto" class="home-hero-photo" alt="使用者照片" />
+      </div>
+      
+
+      <!-- 頁中：70% 高 -->
+      <main class="app-main">
+        <!-- 首頁分頁 -->
+        <section id="homeSection" class="section">
+          <!-- 首頁：頁中 F–K（總高 50vh） -->
+          <div id="homeMidStack" class="home-mid-stack">
+            <!-- F：顯示大照片的下方 50%（16vh） -->
+            <div class="mid-row row-f"></div>
+            <!-- G：狀態顯示（字體 4vh） -->
+            <div class="mid-row row-g">
+              <div id="homeStatus" class="status-text" aria-live="polite"></div>
+            </div>
+            <!-- H：上班按鈕（5vh，紅色） -->
+            <div class="mid-row row-h">
+              <button id="btnStart" class="btn btn-red" type="button">打卡</button>
+            </div>
+            <!-- I：請假／補卡按鈕（5vh，紅色） -->
+            <div class="mid-row row-i">
+              <button id="btnLeaveRequest" class="btn btn-grey" type="button">請假</button>
+              <button id="btnMakeup" class="btn btn-grey" type="button">補卡</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- 打卡分頁 -->
+        <section id="checkinSection" class="section hidden">
+          <div class="panel">
+            <div id="checkinContent"></div>
+          </div>
+        </section>
+
+        <!-- 設定分頁 -->
+        <section id="settingsSection" class="section hidden">
+          <div class="panel">
+            <h3>設定</h3>
+            <p id="settingsSubTitle" class="muted"></p>
+            <div id="settingsContent"></div>
+          </div>
+        </section>
+
+        <!-- 幹部分頁 -->
+        <section id="leaderSection" class="section hidden">
+          <div class="panel">
+            <div id="leaderContent"></div>
+          </div>
+        </section>
+
+        <!-- 人事分頁 -->
+        <section id="personnelSection" class="section hidden">
+          <div class="panel">
+            <div id="personnelContent"></div>
+          </div>
+        </section>
+
+        <!-- 管理分頁 -->
+        <section id="manageSection" class="section hidden">
+          <div class="panel">
+            <h3>管理</h3>
+            <p id="manageSubTitle" class="muted"></p>
+            <p class="muted">此分頁的功能將在後續實作。</p>
+          </div>
+        </section>
+
+        <!-- 功能分頁 -->
+        <section id="featureSection" class="section hidden">
+          <div class="panel"></div>
+        </section>
+      </main>
+
+      <!-- 頁尾：10% 高，固定底部、最上層 -->
+      <footer class="app-footer">
+        <button class="tab-btn active" data-tab="home" aria-label="首頁" type="button">
+          <div class="tab-icon" aria-hidden="true">
+            <!-- Home -->
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M3 10l9-7 9 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M5 10v8h14v-8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </div>
+          <div class="tab-label">首頁</div>
+        </button>
+        <button class="tab-btn" data-tab="checkin" aria-label="打卡" type="button">
+          <div class="tab-icon" aria-hidden="true">
+            <!-- Clock -->
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" />
+              <path d="M12 7v5l3 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </div>
+          <div class="tab-label">打卡</div>
+        </button>
+        <button class="tab-btn" data-tab="leader" aria-label="幹部" type="button">
+          <div class="tab-icon" aria-hidden="true">
+            <!-- Map Pin icon -->
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12 21s7-4.5 7-10a7 7 0 10-14 0c0 5.5 7 10 7 10z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+              <circle cx="12" cy="11" r="2.5" stroke="currentColor" stroke-width="2" />
+            </svg>
+          </div>
+          <div class="tab-label">幹部</div>
+        </button>
+        <button class="tab-btn" data-tab="external" aria-label="社區" type="button">
+          <div class="tab-icon" aria-hidden="true">
+            <!-- Link icon -->
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M10 14a5 5 0 007.07 0l2.83-2.83a5 5 0 00-7.07-7.07L11 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M14 10a5 5 0 00-7.07 0L4.1 12.83a5 5 0 007.07 7.07L13 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <div class="tab-label">社區</div>
+        </button>
+        <button class="tab-btn" data-tab="manage" aria-label="管理" type="button">
+          <div class="tab-icon" aria-hidden="true">
+            <!-- Shield -->
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12 3l7 4v5c0 5-7 9-7 9s-7-4-7-9V7l7-4z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </div>
+          <div class="tab-label">管理</div>
+        </button>
+        <button class="tab-btn" data-tab="feature" aria-label="功能" type="button">
+          <div class="tab-icon" aria-hidden="true">
+            <!-- Apps Grid -->
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect x="4" y="4" width="3" height="3" rx="0.75" stroke="currentColor" stroke-width="2" />
+              <rect x="10" y="4" width="3" height="3" rx="0.75" stroke="currentColor" stroke-width="2" />
+              <rect x="16" y="4" width="3" height="3" rx="0.75" stroke="currentColor" stroke-width="2" />
+              <rect x="4" y="10" width="3" height="3" rx="0.75" stroke="currentColor" stroke-width="2" />
+              <rect x="10" y="10" width="3" height="3" rx="0.75" stroke="currentColor" stroke-width="2" />
+              <rect x="16" y="10" width="3" height="3" rx="0.75" stroke="currentColor" stroke-width="2" />
+              <rect x="4" y="16" width="3" height="3" rx="0.75" stroke="currentColor" stroke-width="2" />
+              <rect x="10" y="16" width="3" height="3" rx="0.75" stroke="currentColor" stroke-width="2" />
+              <rect x="16" y="16" width="3" height="3" rx="0.75" stroke="currentColor" stroke-width="2" />
+            </svg>
+          </div>
+          <div class="tab-label">功能</div>
+        </button>
+        <button class="tab-btn" data-tab="personnel" aria-label="人事" type="button">
+          <div class="tab-icon" aria-hidden="true">
+            <!-- User icon -->
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="12" cy="8" r="3.5" stroke="currentColor" stroke-width="2" />
+              <path d="M4 20c0-4 4-6 8-6s8 2 8 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </div>
+          <div class="tab-label">人事</div>
+        </button>
+        <button class="tab-btn" data-tab="settings" aria-label="設定" type="button">
+          <div class="tab-icon" aria-hidden="true">
+            <!-- Hex Gear icon -->
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <polygon points="12 3 19 7 19 17 12 21 5 17 5 7" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+              <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2" />
+            </svg>
+          </div>
+          <div class="tab-label">設定</div>
+        </button>
+      </footer>
+    </div>
+
+    <script type="module" src="app.js?v=3"></script>
+    <div id="modalRoot" class="modal-root hidden"></div>
+  </body>
+  </html>
