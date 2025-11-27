@@ -171,8 +171,10 @@ function isTWNationalHoliday(date) {
 }
 function defaultRosterStatusForDate(date) {
   const wd = date.getDay();
-  const weekendOrFri = (wd === 0 || wd === 6 || wd === 5);
-  return (weekendOrFri || isTWNationalHoliday(date)) ? '休假日' : '上班日';
+  if (wd === 0 || wd === 6) return '休假日';
+  if (isTWNationalHoliday(date)) return '休假日';
+  if (wd === 5) return '特休日';
+  return '上班日';
 }
 function formatDateYYYYMMDD(d) {
   return d.getFullYear() + '-' + two(d.getMonth() + 1) + '-' + two(d.getDate());
@@ -4286,6 +4288,53 @@ function hasFullAccessToTab(tab) {
       });
       subTabsEl.appendChild(sel);
     }
+  if (mainTab === 'personnel') {
+    const sel = document.createElement('select');
+    sel.className = 'subtab-select';
+    sel.id = 'personnelCompanySelect';
+    const companies = Array.isArray(appState.companies) ? appState.companies : [];
+    const me = appState.accounts.find((a) => a.id === appState.currentUserId) || null;
+    const meCompanyIds = Array.isArray(me?.companyIds) ? me.companyIds : (me?.companyId ? [me.companyId] : []);
+    const onlyOneRaw = meCompanyIds.length === 1 ? meCompanyIds[0] : null;
+    if (companies.length) {
+      companies.forEach((co) => {
+        const opt = document.createElement('option');
+        opt.value = co.id;
+        opt.textContent = co.name || co.id;
+        sel.appendChild(opt);
+      });
+    }
+    if (onlyOneRaw) {
+      let onlyOne = onlyOneRaw;
+      if (!companies.some((c) => String(c.id||'') === String(onlyOne))) {
+        const byName = companies.find((c) => String(c.name||'') === String(onlyOne));
+        if (byName) onlyOne = byName.id;
+      }
+      appState.personnelCompanyFilter = onlyOne;
+      sel.value = onlyOne;
+      sel.disabled = true;
+    } else if (appState.personnelCompanyFilter) {
+      let v = appState.personnelCompanyFilter;
+      if (!companies.some((c) => String(c.id||'') === String(v))) {
+        const byName = companies.find((c) => String(c.name||'') === String(v));
+        if (byName) v = byName.id;
+        appState.personnelCompanyFilter = v;
+      }
+      sel.value = v;
+    } else {
+      const firstOpt = sel.options && sel.options.length ? sel.options[0].value : null;
+      if (firstOpt) {
+        appState.personnelCompanyFilter = firstOpt;
+        sel.value = firstOpt;
+      }
+    }
+    sel.addEventListener('change', () => {
+      appState.personnelCompanyFilter = sel.value || null;
+      setActiveSubTab(activeSubTab);
+      try { refreshSubtabBadges(); } catch {}
+    });
+    subTabsEl.appendChild(sel);
+  }
     tabs.forEach((label, idx) => {
       const btn = document.createElement("button");
       btn.className = "subtab-btn";
@@ -4336,6 +4385,10 @@ function hasFullAccessToTab(tab) {
     if (!container) return;
     container.innerHTML = "";
     if (label === "班表") {
+      try {
+        const selCo = document.getElementById('personnelCompanySelect');
+        if (!appState.personnelCompanyFilter && selCo && selCo.value) appState.personnelCompanyFilter = selCo.value;
+      } catch {}
       try { loadRosterPlansFromStorage(); } catch {}
       const html = `
         <div class="roster-layout" role="region" aria-label="班表">
@@ -4388,8 +4441,26 @@ function hasFullAccessToTab(tab) {
       }
       // 幹部名單選項
       if (sel) {
-        const officers = appState.accounts.filter((a) => (a.role || "").includes("主管") || (a.role || "").includes("管理"));
-        const opts = officers.length ? officers : appState.accounts.slice(0, 10);
+        const excludeRe = /(系統管理員|管理層|人事)/;
+        const all = appState.accounts || [];
+        const coId = appState.personnelCompanyFilter || null;
+        const companies = Array.isArray(appState.companies) ? appState.companies : [];
+        const coObj = companies.find((c) => String(c.id||'') === String(coId) || String(c.name||'') === String(coId)) || null;
+        const coName = coObj?.name || null;
+        const inCompany = (a) => {
+          const ids0 = Array.isArray(a.companyIds) ? a.companyIds : (a.companyId ? [a.companyId] : []);
+          const ids = ids0.map((x) => String(x||'').trim());
+          const idOk = coId ? ids.includes(String(coId)) : false;
+          const nameOk = coName ? ids.includes(String(coName)) : false;
+          if (!coId && !coName) return true;
+          return idOk || nameOk;
+        };
+        const officers = all.filter((a) => {
+          const r = String(a.role||"");
+          return /主管|行政/.test(r) && !excludeRe.test(r) && inCompany(a);
+        });
+        const fallback = all.filter((a)=> inCompany(a) && !excludeRe.test(String(a.role||""))).slice(0, 10);
+        const opts = officers.length ? officers : fallback;
         opts.forEach((a) => {
           const opt = document.createElement("option");
           opt.value = a.id;
@@ -4461,7 +4532,33 @@ function hasFullAccessToTab(tab) {
         const defaultStatus = defaultRosterStatusForDate(date);
         const startCell = plan ? (String(plan.status||"").includes("休假") ? "" : (plan.startTime || "09:00")) : (defaultStatus === "休假日" ? "" : "09:00");
         const endCell = plan ? (String(plan.status||"").includes("休假") ? "" : (plan.endTime || "17:30")) : (defaultStatus === "休假日" ? "" : "17:30");
-        const status = plan ? plan.status : defaultStatus;
+        let status = plan ? plan.status : defaultStatus;
+        try {
+          const officerId = sel?.value || "";
+          const ids = resolveOfficerIds(officerId);
+          const uid = ids.uid || officerId;
+          const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+          const dayEnd = new Date(date.getFullYear(), date.getMonth(), date.getDate()+1);
+          const key = `${date.getFullYear()}-${date.getMonth()+1}`;
+          const monthList = appState.rosterMonthLeaves?.[uid]?.[key] || [];
+          let hasLeave = Array.isArray(monthList) && monthList.length ? monthList.some((r) => !(r.edt < dayStart || r.sdt >= dayEnd)) : false;
+          if (!hasLeave) {
+            const list = Array.isArray(appState.leaveRequests) ? appState.leaveRequests : JSON.parse(localStorage.getItem('leaveRequests')||'[]');
+            hasLeave = list.some((r) => {
+              const ru = String(r.uid||''); if (ru !== String(uid||'')) return false;
+              const st = String(r.status||''); if (st && st !== '核准') return false;
+              const s = r.startAt instanceof Date ? r.startAt : (typeof r.startAt === 'string' ? new Date(r.startAt) : null);
+              const e = r.endAt instanceof Date ? r.endAt : (typeof r.endAt === 'string' ? new Date(r.endAt) : null);
+              if (!(s instanceof Date) || isNaN(s) || !(e instanceof Date) || isNaN(e)) return false;
+              return !(e < dayStart || s >= dayEnd);
+            });
+          }
+          const baseNorm = (v) => String(v||'').includes('值班') ? '值班日' : (String(v||'').includes('休假') ? '休假日' : (String(v||'').includes('公休') ? '特休日' : (String(v||'').includes('請假') ? '請假日' : '上班日')));
+          const baseVal = baseNorm(status);
+          if (hasLeave && (baseVal === '上班日' || baseVal === '值班日')) status = '請假日';
+          const wd = date.getDay();
+          if (wd === 5 && baseVal === '休假日' && !isTWNationalHoliday(date) && !String(status||'').includes('值班')) status = '特休日';
+        } catch {}
         const tr = document.createElement("tr");
         tr.innerHTML = `<td>${startCell}</td><td>${endCell}</td><td>${status}</td><td><button class="btn btn-xs roster-edit">編輯</button> <button class="btn btn-xs roster-del">刪除</button></td>`;
         // 編輯
@@ -4720,6 +4817,32 @@ function hasFullAccessToTab(tab) {
               return true;
             } catch { return false; }
           }
+          async function ensureMonthlyLeavesFor(uid, y, m) {
+            try {
+              await ensureFirebase();
+              appState.rosterMonthLeaves = appState.rosterMonthLeaves || {};
+              const key = `${y}-${m+1}`;
+              const exists = appState.rosterMonthLeaves[uid] && appState.rosterMonthLeaves[uid][key];
+              if (exists) return false;
+              const ref = fns.collection(db, 'leaveRequests');
+              const q = fns.query(ref, fns.where('uid','==', uid));
+              const snap = await withRetry(() => fns.getDocs(q));
+              const list = [];
+              snap.forEach((doc) => {
+                const data = doc.data() || {};
+                const s = data.startAt; const e = data.endAt;
+                const st = String(data.status||'');
+                let sdt = typeof s === 'string' ? new Date(s) : (s && typeof s.toDate === 'function' ? s.toDate() : null);
+                let edt = typeof e === 'string' ? new Date(e) : (e && typeof e.toDate === 'function' ? e.toDate() : null);
+                if (!(sdt instanceof Date) || isNaN(sdt) || !(edt instanceof Date) || isNaN(edt)) return;
+                if (st !== '核准') return;
+                list.push({ sdt, edt });
+              });
+              appState.rosterMonthLeaves[uid] = appState.rosterMonthLeaves[uid] || {};
+              appState.rosterMonthLeaves[uid][key] = list;
+              return true;
+            } catch { return false; }
+          }
           function getDayClasses(dayStr) {
             if (!dayStr) return { cellCls: "", btnCls: "" };
             const ids = resolveOfficerIds(officerId);
@@ -4732,10 +4855,41 @@ function hasFullAccessToTab(tab) {
               const v = String(s||'');
               if (v.includes('值班')) return '值班日';
               if (v.includes('休假')) return '休假日';
+              if (v.includes('公休')) return '特休日';
+              if (v.includes('請假')) return '請假日';
               return '上班日';
             };
             base = norm(base);
-            const baseCls = base === '值班日' ? 'status-duty' : (base === '休假日' ? 'status-off' : 'status-work');
+            const dateObj = new Date(y, m, Number(dayStr));
+            const wd5 = dateObj.getDay() === 5;
+            if (wd5 && base === '休假日' && !isTWNationalHoliday(dateObj) && !String(plan?.status||'').includes('值班')) base = '特休日';
+            function hasLeaveOnDate(officerId, date) {
+              try {
+                const ids = resolveOfficerIds(officerId);
+                const uid = ids.uid || officerId;
+                const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+                const dayEnd = new Date(date.getFullYear(), date.getMonth(), date.getDate()+1);
+                const key = `${date.getFullYear()}-${date.getMonth()+1}`;
+                const monthList = appState.rosterMonthLeaves?.[uid]?.[key] || [];
+                if (Array.isArray(monthList) && monthList.length) {
+                  return monthList.some((r) => !(r.edt < dayStart || r.sdt >= dayEnd));
+                }
+                const list = Array.isArray(appState.leaveRequests) ? appState.leaveRequests : JSON.parse(localStorage.getItem('leaveRequests')||'[]');
+                return list.some((r) => {
+                  const ru = String(r.uid||''); if (ru !== String(uid||'')) return false;
+                  const st = String(r.status||''); if (st && st !== '核准') return false;
+                  const s = r.startAt instanceof Date ? r.startAt : (typeof r.startAt === 'string' ? new Date(r.startAt) : null);
+                  const e = r.endAt instanceof Date ? r.endAt : (typeof r.endAt === 'string' ? new Date(r.endAt) : null);
+                  if (!(s instanceof Date) || isNaN(s) || !(e instanceof Date) || isNaN(e)) return false;
+                  return !(e < dayStart || s >= dayEnd);
+                });
+              } catch { return false; }
+            }
+            if ((base === '上班日' || base === '值班日') && hasLeaveOnDate(officerId, dateObj)) base = '請假日';
+            const baseCls = base === '值班日' ? 'status-duty' :
+                            base === '休假日' ? 'status-off' :
+                            base === '特休日' ? 'status-public-off' :
+                            base === '請假日' ? 'status-leave' : 'status-work';
             const key = `${y}-${m+1}`;
             const map = appState.rosterMonthCheckins?.[officerId]?.[key] || {};
             const rec = map[k] || null;
@@ -4748,6 +4902,7 @@ function hasFullAccessToTab(tab) {
               const ids = resolveOfficerIds(officerId);
               const uid = ids.uid || officerId;
               ensureMonthlyCheckinsFor(uid, y, m).then((loaded) => { if (loaded) { try { renderMonth(date); } catch {} } });
+              ensureMonthlyLeavesFor(uid, y, m).then((loaded) => { if (loaded) { try { renderMonth(date); } catch {} } });
             }
           } catch {}
           const headerHtml = `
@@ -6268,14 +6423,16 @@ function hasFullAccessToTab(tab) {
       const sel = document.getElementById("rosterOfficerSelect");
       if (sel) {
         const coId = appState.leaderCompanyFilter || null;
-        const allowedRoles = ["系統管理員","管理層","高階主管","初階主管","行政"];
-        const officers = appState.accounts.filter((a) => {
-          const isOfficer = allowedRoles.includes(String(a.role||""));
+        const excludeRe = /(系統管理員|管理層|人事)/;
+        const officers = (appState.accounts||[]).filter((a) => {
+          const r = String(a.role||"");
+          const isOfficer = /主管|行政/.test(r) && !excludeRe.test(r);
           if (!coId) return isOfficer;
           const ids = Array.isArray(a.companyIds) ? a.companyIds : (a.companyId ? [a.companyId] : []);
           return isOfficer && ids.includes(coId);
         });
-        const opts = officers.length ? officers : appState.accounts.slice(0, 10);
+        const fallback = (appState.accounts||[]).filter((a)=> !excludeRe.test(String(a.role||""))).slice(0, 10);
+        const opts = officers.length ? officers : fallback;
         opts.forEach((a) => {
           const opt = document.createElement("option");
           opt.value = a.id;
@@ -7574,6 +7731,7 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
                   <th>下班打卡時間</th>
                   <th>總上班時數</th>
                   <th>判定工時</th>
+                  <th>計點</th>
                   <th>狀態</th>
                 </tr></thead>
                 <tbody id="reportBody"></tbody>
@@ -7590,6 +7748,8 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
                   <th>其他假別</th>
                   <th>休假日上班</th>
                   <th>特休日</th>
+                  <th>曠職</th>
+                  <th>計點</th>
                 </tr></thead>
                 <tbody id="reportSummaryBody">
                   <tr id="summaryDaysRow"></tr>
@@ -7628,6 +7788,7 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
             if (s.includes('特休')) return '特休日';
             if (s.includes('值班')) return '值班日';
             if (s.includes('休假')) return '休假日';
+            if (s.includes('公休')) return '特休日';
             return '上班日';
           };
           const baseStatusForDate = (date) => {
@@ -7707,8 +7868,8 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
               const totalHours = (startAt && endAt) ? ((endAt - startAt)/3600000) : 0;
               const base = baseStatusForDate(new Date(dayStart));
               const rp = rosterPlanOfDate(new Date(dayStart));
-              const planStart = rp?.startTime || (base==='休假日' || base==='請假日' ? '' : '09:00');
-              const planEnd = rp?.endTime || (base==='休假日' || base==='請假日' ? '' : '17:30');
+              const planStart = rp?.startTime || (base==='休假日' || base==='請假日' || base==='特休日' ? '' : '09:00');
+              const planEnd = rp?.endTime || (base==='休假日' || base==='請假日' || base==='特休日' ? '' : '17:30');
               const planHours = (() => {
                 if (!planStart || !planEnd) return 0;
                 const [sh, sm] = String(planStart).split(':').map((x)=>Number(x));
@@ -7718,9 +7879,9 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
               })();
               const issues = [];
               const isLeader = /主管|管理/.test(String(appState.currentUserRole||''));
-              if (!startAt && !endAt && base!=='請假日' && base!=='休假日') issues.push('曠職');
-              if (!!startAt !== !!endAt && base!=='請假日' && base!=='休假日') issues.push('未完成打卡流程');
-              if (isLeader && startAt && endAt && totalHours < 8.5 && base!=='休假日' && base!=='請假日') issues.push('總時數不足');
+              if (!startAt && !endAt && base!=='請假日' && base!=='休假日' && base!=='特休日') issues.push('曠職');
+              if (!!startAt !== !!endAt && base!=='請假日' && base!=='休假日' && base!=='特休日') issues.push('未完成打卡流程');
+              if (isLeader && startAt && endAt && totalHours < 8.5 && base!=='休假日' && base!=='請假日' && base!=='特休日') issues.push('總時數不足');
               // 遲到/早退（以預設門檻）
               const lateCut = new Date(dayStart); lateCut.setHours(9,10,0,0);
               const offCut = new Date(dayStart); offCut.setHours(17,30,0,0);
@@ -7752,29 +7913,32 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
               })();
               td6.textContent = computed ? `${computed.toFixed(2)} 小時` : '';
               const td7 = document.createElement('td');
+              const dayPoints = /曠職/.test(String(r.statusText||'')) ? -1 : 0;
+              td7.textContent = dayPoints ? String(dayPoints) : '';
+              const td8 = document.createElement('td');
               const svgOk = '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="3"/></svg>';
               const svgBad = '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6 L18 18 M18 6 L6 18" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>';
               const cls = r.isNormal ? 'ok' : 'bad';
               const parts = String(r.statusText||'').split('：');
               const reason = parts.length > 1 ? parts.slice(1).join('：') : '';
-              td7.innerHTML = `<span class="status-icon ${cls}" title="${r.statusText}">${r.isNormal ? '○' : '╳'}</span><span class="status-reason">： ${reason}</span>`;
-              const isOffOrLeave = /休假日|請假日/.test(String(reason||''));
-              if (isOffOrLeave) { td3.innerHTML = ''; td4.innerHTML = ''; td5.innerHTML = ''; td6.textContent = ''; }
+              td8.innerHTML = `<span class="status-icon ${cls}" title="${r.statusText}">${r.isNormal ? '○' : '╳'}</span><span class="status-reason">： ${reason}</span>`;
+              const isOffOrLeave = /休假日|請假日|特休日/.test(String(reason||''));
+              if (isOffOrLeave) { td3.innerHTML = ''; td4.innerHTML = ''; td5.innerHTML = ''; td6.textContent = ''; td7.textContent = ''; }
               const t = nowInTZ('Asia/Taipei');
               const isFuture = (r.date.getFullYear() > t.getFullYear()) ||
                                (r.date.getFullYear() === t.getFullYear() && r.date.getMonth() > t.getMonth()) ||
                                (r.date.getFullYear() === t.getFullYear() && r.date.getMonth() === t.getMonth() && r.date.getDate() > t.getDate());
-              if (isFuture) { td3.innerHTML = ''; td4.innerHTML = ''; td5.innerHTML = ''; td6.textContent = ''; td7.innerHTML = ''; }
-              tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3); tr.appendChild(td4); tr.appendChild(td5); tr.appendChild(td6); tr.appendChild(td7);
+              if (isFuture) { td3.innerHTML = ''; td4.innerHTML = ''; td5.innerHTML = ''; td6.textContent = ''; td7.textContent = ''; td8.innerHTML = ''; }
+              tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3); tr.appendChild(td4); tr.appendChild(td5); tr.appendChild(td6); tr.appendChild(td7); tr.appendChild(td8);
               frag.appendChild(tr);
             });
             tbody.innerHTML = ''; tbody.appendChild(frag);
-            const sum = { attendDays: 0, attendHours: 0, lateDays: 0, lateHours: 0, earlyDays: 0, earlyHours: 0, sickDays: 0, sickHours: 0, personalDays: 0, personalHours: 0, otherLeaveDays: 0, otherLeaveHours: 0, offWorkDays: 0, offWorkHours: 0, specialOffDays: 0, specialOffHours: 0 };
+            const sum = { attendDays: 0, attendHours: 0, lateDays: 0, lateHours: 0, earlyDays: 0, earlyHours: 0, sickDays: 0, sickHours: 0, personalDays: 0, personalHours: 0, otherLeaveDays: 0, otherLeaveHours: 0, offWorkDays: 0, offWorkHours: 0, specialOffDays: 0, specialOffHours: 0, absentDays: 0, pointsTotal: 0 };
             rows.forEach((r) => {
               const parts = String(r.statusText||'').split('：');
               const reason = parts.length > 1 ? parts.slice(1).join('：') : '';
               const onLeave = /請假日/.test(reason);
-              const onOff = /休假日/.test(reason);
+              const onOff = /休假日|特休日/.test(reason);
               const onSpecialOff = /特休日/.test(reason);
               const hasStart = !!r.startAt; const hasEnd = !!r.endAt;
               const completed = hasStart && hasEnd && !onLeave && !onOff;
@@ -7784,9 +7948,11 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
               if (onLeave) { sum.otherLeaveDays += 1; }
               if (onOff && (hasStart || hasEnd)) { sum.offWorkDays += 1; sum.offWorkHours += Number(r.totalHours||0); }
               if (onSpecialOff) { sum.specialOffDays += 1; if (hasStart || hasEnd) sum.specialOffHours += Number(r.totalHours||0); }
+              if (/曠職/.test(String(r.statusText||''))) { sum.absentDays += 1; sum.pointsTotal += -1; } else { sum.pointsTotal += 0; }
             });
-            const days = [sum.attendDays, sum.lateDays, sum.earlyDays, sum.sickDays, sum.personalDays, sum.otherLeaveDays, sum.offWorkDays, sum.specialOffDays];
-            const hours = [sum.attendHours, sum.lateHours, sum.earlyHours, sum.sickHours, sum.personalHours, sum.otherLeaveHours, sum.offWorkHours, sum.specialOffHours].map((n)=> (n ? n.toFixed(2)+' 小時' : ''));
+            const days = [sum.attendDays, sum.lateDays, sum.earlyDays, sum.sickDays, sum.personalDays, sum.otherLeaveDays, sum.offWorkDays, sum.specialOffDays, sum.absentDays, ''];
+            const hoursBase = [sum.attendHours, sum.lateHours, sum.earlyHours, sum.sickHours, sum.personalHours, sum.otherLeaveHours, sum.offWorkHours, sum.specialOffHours];
+            const hours = hoursBase.map((n)=> (n ? n.toFixed(2)+' 小時' : '')).concat(['', String(sum.pointsTotal)]);
             if (sumBody) {
               const r1 = document.createElement('tr'); r1.innerHTML = days.map((n)=>`<td>${n}</td>`).join('');
               const r2 = document.createElement('tr'); r2.innerHTML = hours.map((t)=>`<td>${t}</td>`).join('');
@@ -7831,7 +7997,7 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
               <div class="h2">${companyName}  ${jobTitle}  ${name}</div>
               <div class="h3">${ym}  個人出勤紀錄表</div>
               <table><thead><tr>
-              <th>日期</th><th>週</th><th>上班打卡時間</th><th>下班打卡時間</th><th>總上班時數</th><th>判定工時</th><th>狀態</th>
+              <th>日期</th><th>週</th><th>上班打卡時間</th><th>下班打卡時間</th><th>總上班時數</th><th>判定工時</th><th>計點</th><th>狀態</th>
               </tr></thead><tbody>${rowsHtml}</tbody></table>
               <table>${sumHeadHtml}${sumBodyHtml ? `<tbody>${sumBodyHtml}</tbody>` : ''}</table>
               <table>${signHeadHtml}${signBodyHtml ? `<tbody>${signBodyHtml}</tbody>` : ''}</table>
@@ -8388,9 +8554,13 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
       if (info) info.textContent = `日期：${dateStr}`;
       const sel = document.getElementById("rosterOfficerSelect");
       if (sel) {
-        const allowedRoles = ["系統管理員","管理層","高階主管","初階主管","行政"];
-        const officers = appState.accounts.filter((a) => allowedRoles.includes(String(a.role||"")));
-        const opts = officers.length ? officers : appState.accounts.slice(0, 10);
+        const excludeRe = /(系統管理員|管理層|人事)/;
+        const officers = (appState.accounts||[]).filter((a) => {
+          const r = String(a.role||"");
+          return /主管|行政/.test(r) && !excludeRe.test(r);
+        });
+        const fallback = (appState.accounts||[]).filter((a)=> !excludeRe.test(String(a.role||""))).slice(0, 10);
+        const opts = officers.length ? officers : fallback;
         opts.forEach((a) => {
           const opt = document.createElement("option");
           opt.value = a.id;

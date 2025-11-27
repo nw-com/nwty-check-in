@@ -538,9 +538,13 @@ body.status-leave-request { --hero-pulse-rgb: 245,124,0; }
 .roster-cal-cell.curr .roster-cal-day.status-work { background: #e8f1ff; color: #0f172a; }
 .roster-cal-cell.curr .roster-cal-day.status-duty { background: #fff3a5; color: #6b4e00; }
 .roster-cal-cell.curr .roster-cal-day.status-off { background: #eeeeee; color: #9ca3af; }
+.roster-cal-cell.curr .roster-cal-day.status-public-off { background: #ede9fe; color: #6b21a8; }
+.roster-cal-cell.curr .roster-cal-day.status-leave { background: #fff4e6; color: #b45309; }
 .roster-cal-cell.today .roster-cal-day.status-work { background: #e8f1ff; }
 .roster-cal-cell.today .roster-cal-day.status-duty { background: #fff3a5; }
 .roster-cal-cell.today .roster-cal-day.status-off { background: #eeeeee; }
+.roster-cal-cell.today .roster-cal-day.status-public-off { background: #ede9fe; }
+.roster-cal-cell.today .roster-cal-day.status-leave { background: #fff4e6; }
 
 /* 可點與不可點的方塊格式 */
 .roster-cal-day, .roster-cal-day-disabled { width: calc(100% - 8px); height: auto; aspect-ratio: 1 / 1; margin: 4px; display: flex; align-items: center; justify-content: center; border-radius: 8px; font-size: 14px; line-height: 1; box-sizing: border-box; }
@@ -552,6 +556,8 @@ body.status-leave-request { --hero-pulse-rgb: 245,124,0; }
 .roster-cal-day.status-work { background: #e8f1ff; color: #0f172a; }
 .roster-cal-day.status-duty { background: #fff3a5; color: #6b4e00; }
 .roster-cal-day.status-off { background: #eeeeee; color: #9ca3af; }
+.roster-cal-day.status-public-off { background: #ede9fe; color: #6b21a8; }
+.roster-cal-day.status-leave { background: #fff4e6; color: #b45309; }
 
 /* 完成度覆蓋（已完成=綠、未完成=紅） */
 .roster-cal-day.done { background: #e6f4ea !important; color: #0b8043; }
