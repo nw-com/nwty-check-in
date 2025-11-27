@@ -7573,6 +7573,7 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
                   <th>上班打卡時間</th>
                   <th>下班打卡時間</th>
                   <th>總上班時數</th>
+                  <th>判定工時</th>
                   <th>狀態</th>
                 </tr></thead>
                 <tbody id="reportBody"></tbody>
@@ -7695,24 +7696,38 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
             rows.forEach((r) => {
               const tr = document.createElement('tr');
               const ymd = `${r.date.getFullYear()}-${two(r.date.getMonth()+1)}-${two(r.date.getDate())}`;
-              const td1 = document.createElement('td'); td1.textContent = ymd;
-              const td2 = document.createElement('td'); td2.textContent = `週${r.week}`;
+              const td1 = document.createElement('td'); td1.textContent = two(r.date.getDate());
+              const td2 = document.createElement('td'); td2.textContent = r.week;
               const td3 = document.createElement('td'); td3.innerHTML = `<div>班 : ${r.planStart || ''}</div><div>實 : ${timeStr(r.startAt) || ''}</div>`;
               const td4 = document.createElement('td'); td4.innerHTML = `<div>班 : ${r.planEnd || ''}</div><div>實 : ${timeStr(r.endAt) || ''}</div>`;
               const td5 = document.createElement('td'); td5.innerHTML = `<div>班 : ${r.planHours ? r.planHours.toFixed(2)+' 小時' : ''}</div><div>實 : ${r.totalHours ? r.totalHours.toFixed(2)+' 小時' : ''}</div>`;
               const td6 = document.createElement('td');
+              const computed = (() => {
+                const ph = Number(r.planHours||0);
+                const ah = Number(r.totalHours||0);
+                const abnormalZero = /曠職|總時數不足/.test(String(r.statusText||''));
+                if (abnormalZero) return 0;
+                if (ph && ah) return (ph > ah ? ah : ph);
+                if (ph) return ph;
+                if (ah) return ah;
+                return null;
+              })();
+              td6.textContent = computed ? `${computed.toFixed(2)} 小時` : '';
+              const td7 = document.createElement('td');
               const svgOk = '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="3"/></svg>';
               const svgBad = '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6 L18 18 M18 6 L6 18" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>';
               const cls = r.isNormal ? 'ok' : 'bad';
               const parts = String(r.statusText||'').split('：');
               const reason = parts.length > 1 ? parts.slice(1).join('：') : '';
-              td6.innerHTML = `<span class="status-icon ${cls}" title="${r.statusText}">${r.isNormal ? svgOk : svgBad}</span><span class="status-reason">： ${reason}</span>`;
+              td7.innerHTML = `<span class="status-icon ${cls}" title="${r.statusText}">${r.isNormal ? svgOk : svgBad}</span><span class="status-reason">： ${reason}</span>`;
+              const isOffOrLeave = /休假日|請假日/.test(String(reason||''));
+              if (isOffOrLeave) { td3.innerHTML = ''; td4.innerHTML = ''; td5.innerHTML = ''; td6.textContent = ''; }
               const t = nowInTZ('Asia/Taipei');
               const isFuture = (r.date.getFullYear() > t.getFullYear()) ||
                                (r.date.getFullYear() === t.getFullYear() && r.date.getMonth() > t.getMonth()) ||
                                (r.date.getFullYear() === t.getFullYear() && r.date.getMonth() === t.getMonth() && r.date.getDate() > t.getDate());
-              if (isFuture) { td3.innerHTML = ''; td4.innerHTML = ''; td5.innerHTML = ''; td6.innerHTML = ''; }
-              tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3); tr.appendChild(td4); tr.appendChild(td5); tr.appendChild(td6);
+              if (isFuture) { td3.innerHTML = ''; td4.innerHTML = ''; td5.innerHTML = ''; td6.textContent = ''; td7.innerHTML = ''; }
+              tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3); tr.appendChild(td4); tr.appendChild(td5); tr.appendChild(td6); tr.appendChild(td7);
               frag.appendChild(tr);
             });
             tbody.innerHTML = ''; tbody.appendChild(frag);
@@ -7725,7 +7740,7 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
               const uid = appState.currentUserId || user.uid;
               const acc = (appState.accounts||[]).find((a) => a.id === uid) || null;
               const companyName = acc ? ((appState.companies||[]).find((c) => c.id === acc.companyId)?.name || '') : '';
-              const role = appState.currentUserRole || '';
+              const jobTitle = acc?.title || '';
               const name = acc?.name || auth?.currentUser?.displayName || (acc?.email ? String(acc.email).split('@')[0] : '') || '使用者';
               const rowsHtml = Array.from(tbody.querySelectorAll('tr')).map((tr) => {
                 const tds = Array.from(tr.querySelectorAll('td')).map((td) => td.textContent || '');
@@ -7742,10 +7757,10 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
               thead th { background: #f3f4f6; }
               </style></head><body>
               <div class="h1">西北保全</div>
-              <div class="h2">${companyName}  ${role}  ${name}</div>
+              <div class="h2">${companyName}  ${jobTitle}  ${name}</div>
               <div class="h3">${ym}  個人出勤紀錄表</div>
               <table><thead><tr>
-              <th>日期</th><th>週</th><th>上班打卡時間</th><th>下班打卡時間</th><th>總上班時數</th><th>狀態</th>
+              <th>日期</th><th>週</th><th>上班打卡時間</th><th>下班打卡時間</th><th>總上班時數</th><th>判定工時</th><th>狀態</th>
               </tr></thead><tbody>${rowsHtml}</tbody></table>
               </body></html>`;
               const w = window.open('', '_blank');
