@@ -4557,7 +4557,7 @@ function hasFullAccessToTab(tab) {
           const baseVal = baseNorm(status);
           if (hasLeave && (baseVal === '上班日' || baseVal === '值班日')) status = '請假日';
           const wd = date.getDay();
-          if (wd === 5 && baseVal === '休假日' && !isTWNationalHoliday(date) && !String(status||'').includes('值班')) status = '特休日';
+          if (wd === 5 && !isTWNationalHoliday(date) && baseVal !== '值班日' && baseVal !== '請假日') status = '特休日';
         } catch {}
         const tr = document.createElement("tr");
         tr.innerHTML = `<td>${startCell}</td><td>${endCell}</td><td>${status}</td><td><button class="btn btn-xs roster-edit">編輯</button> <button class="btn btn-xs roster-del">刪除</button></td>`;
@@ -4851,18 +4851,18 @@ function hasFullAccessToTab(tab) {
             const k = `${y}-${String(m+1).padStart(2,'0')}-${String(dayStr).padStart(2,'0')}`;
             const wd = new Date(y,m,Number(dayStr)).getDay();
             let base = plan?.status || defaultRosterStatusForDate(new Date(y, m, Number(dayStr)));
-            const norm = (s) => {
-              const v = String(s||'');
-              if (v.includes('值班')) return '值班日';
-              if (v.includes('休假')) return '休假日';
-              if (v.includes('公休')) return '特休日';
-              if (v.includes('請假')) return '請假日';
-              return '上班日';
-            };
-            base = norm(base);
-            const dateObj = new Date(y, m, Number(dayStr));
-            const wd5 = dateObj.getDay() === 5;
-            if (wd5 && base === '休假日' && !isTWNationalHoliday(dateObj) && !String(plan?.status||'').includes('值班')) base = '特休日';
+          const norm = (s) => {
+            const v = String(s||'');
+            if (v.includes('值班')) return '值班日';
+            if (v.includes('休假')) return '休假日';
+            if (v.includes('公休')) return '特休日';
+            if (v.includes('請假')) return '請假日';
+            return '上班日';
+          };
+          base = norm(base);
+          const dateObj = new Date(y, m, Number(dayStr));
+          const wd5 = dateObj.getDay() === 5;
+          if (wd5 && !isTWNationalHoliday(dateObj) && !String(plan?.status||'').includes('值班') && base !== '請假日') base = '特休日';
             function hasLeaveOnDate(officerId, date) {
               try {
                 const ids = resolveOfficerIds(officerId);
@@ -7887,7 +7887,11 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
               const offCut = new Date(dayStart); offCut.setHours(17,30,0,0);
               if (startAt && startAt > lateCut && base!=='休假日' && base!=='請假日') issues.push('遲到');
               if (endAt && endAt < offCut && base!=='休假日' && base!=='請假日') issues.push('早退');
-              const statusText = issues.length ? `異常：${issues.join('、')}` : `正常：${base}`;
+              const displayBase = (() => {
+                const isFri = new Date(dayStart).getDay() === 5;
+                return (base === '特休日' && isFri && !isTWNationalHoliday(new Date(dayStart))) ? '修休日' : base;
+              })();
+              const statusText = issues.length ? `異常：${issues.join('、')}` : `正常：${displayBase}`;
               const isNormal = issues.length === 0;
               rows.push({ date: new Date(dayStart), week: weekday(dayStart), startAt, endAt, totalHours, statusText, isNormal, planStart, planEnd, planHours });
             }
@@ -7922,7 +7926,7 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
               const parts = String(r.statusText||'').split('：');
               const reason = parts.length > 1 ? parts.slice(1).join('：') : '';
               td8.innerHTML = `<span class="status-icon ${cls}" title="${r.statusText}">${r.isNormal ? '○' : '╳'}</span><span class="status-reason">： ${reason}</span>`;
-              const isOffOrLeave = /休假日|請假日|特休日/.test(String(reason||''));
+              const isOffOrLeave = /休假日|請假日|特休日|修休日/.test(String(reason||''));
               if (isOffOrLeave) { td3.innerHTML = ''; td4.innerHTML = ''; td5.innerHTML = ''; td6.textContent = ''; td7.textContent = ''; }
               const t = nowInTZ('Asia/Taipei');
               const isFuture = (r.date.getFullYear() > t.getFullYear()) ||
@@ -7938,8 +7942,8 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
               const parts = String(r.statusText||'').split('：');
               const reason = parts.length > 1 ? parts.slice(1).join('：') : '';
               const onLeave = /請假日/.test(reason);
-              const onOff = /休假日|特休日/.test(reason);
-              const onSpecialOff = /特休日/.test(reason);
+              const onOff = /休假日|特休日|修休日/.test(reason);
+              const onSpecialOff = /特休日|修休日/.test(reason);
               const hasStart = !!r.startAt; const hasEnd = !!r.endAt;
               const completed = hasStart && hasEnd && !onLeave && !onOff;
               if (completed) { sum.attendDays += 1; sum.attendHours += Number(r.totalHours||0); }
@@ -7950,9 +7954,9 @@ btnStart?.removeEventListener("click", () => setHomeStatus("work", "上班"));
               if (onSpecialOff) { sum.specialOffDays += 1; if (hasStart || hasEnd) sum.specialOffHours += Number(r.totalHours||0); }
               if (/曠職/.test(String(r.statusText||''))) { sum.absentDays += 1; sum.pointsTotal += -1; } else { sum.pointsTotal += 0; }
             });
-            const days = [sum.attendDays, sum.lateDays, sum.earlyDays, sum.sickDays, sum.personalDays, sum.otherLeaveDays, sum.offWorkDays, sum.specialOffDays, sum.absentDays, ''];
+            const days = [sum.attendDays, sum.lateDays, sum.earlyDays, sum.sickDays, sum.personalDays, sum.otherLeaveDays, sum.offWorkDays, sum.specialOffDays, sum.absentDays, String(sum.pointsTotal)];
             const hoursBase = [sum.attendHours, sum.lateHours, sum.earlyHours, sum.sickHours, sum.personalHours, sum.otherLeaveHours, sum.offWorkHours, sum.specialOffHours];
-            const hours = hoursBase.map((n)=> (n ? n.toFixed(2)+' 小時' : '')).concat(['', String(sum.pointsTotal)]);
+            const hours = hoursBase.map((n)=> (n ? n.toFixed(2)+' 小時' : '')).concat(['', '']);
             if (sumBody) {
               const r1 = document.createElement('tr'); r1.innerHTML = days.map((n)=>`<td>${n}</td>`).join('');
               const r2 = document.createElement('tr'); r2.innerHTML = hours.map((t)=>`<td>${t}</td>`).join('');
