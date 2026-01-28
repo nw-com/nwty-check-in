@@ -6613,7 +6613,12 @@
             const isFirstSnapshot = useRef(true);
             
             // Notification Permission State
-            const [notificationPermission, setNotificationPermission] = useState(Notification.permission);
+            const [notificationPermission, setNotificationPermission] = useState(() => {
+                if ('Notification' in window) {
+                    return Notification.permission;
+                }
+                return 'default';
+            });
             const [enableSystemNotification, setEnableSystemNotification] = useState(true); // Default on
 
             // Notification Popup Logic
@@ -6788,7 +6793,8 @@
                                 const notif = { id: change.doc.id, ...data };
                                 if (isNotificationTarget(notif)) {
                                     // Check for system notification permission
-                                    if (Notification.permission === 'granted' && enableSystemNotification) {
+                                    const hasPermission = 'Notification' in window && Notification.permission === 'granted';
+                                    if (hasPermission && enableSystemNotification) {
                                         // Remove senderId check to allow testing self-notifications
                                         // if (notif.senderId !== dbUser.id) {
                                             try {
@@ -6815,7 +6821,7 @@
                                                     }
                                                     
                                                     // Fallback to standard API
-                                                    if (!sent) {
+                                                    if (!sent && 'Notification' in window) {
                                                         const n = new Notification('新通知', {
                                                             body: notif.content,
                                                             icon: ICON_DATA_URL,
@@ -8935,17 +8941,103 @@
                                       (roles || []).find(r => r.id === dbUser.role)?.permissions?.includes('overview');
                 
                 if (hasOverviewPerm) {
+                    const sendPush = async (title, body) => {
+                        if (!('Notification' in window)) return;
+                        if (Notification.permission !== 'granted') return;
+                        
+                        const ICON_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAALUlEQVRYR+3QQREAAAgCMPy7aQo38AB1sJvp268BBAQEBAQEBAQEBAQEBAQEHguWfwJ/eXw6OAAAAABJRU5ErkJggg==';
+                        
+                        // Try Service Worker first
+                        if ('serviceWorker' in navigator) {
+                            try {
+                                const getSwReady = navigator.serviceWorker.ready;
+                                const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('SW Timeout')), 2000));
+                                const reg = await Promise.race([getSwReady, timeout]);
+                                
+                                await reg.showNotification(title, {
+                                    body: body,
+                                    icon: ICON_DATA_URL,
+                                    badge: ICON_DATA_URL,
+                                    data: { url: window.location.href }
+                                });
+                                return;
+                            } catch (e) {
+                                console.warn('SW notification failed', e);
+                            }
+                        }
+                        
+                        // Fallback
+                        try {
+                            const n = new Notification(title, {
+                                body: body,
+                                icon: ICON_DATA_URL,
+                                badge: ICON_DATA_URL
+                            });
+                            n.onclick = () => window.focus();
+                        } catch (e) {
+                            console.error(e);
+                        }
+                    };
+
                     const qOverviewMeetings = query(collection(db, 'artifacts', appId, 'public', 'data', 'overview_meetings'));
-                    unsubscribes.push(onSnapshot(qOverviewMeetings, (snap) => setOverviewMeetings(snap.docs.map(d => ({ id: d.id, ...d.data() })))));
+                    let firstMeetings = true;
+                    unsubscribes.push(onSnapshot(qOverviewMeetings, (snap) => {
+                        setOverviewMeetings(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                        if (!firstMeetings) {
+                            snap.docChanges().forEach(change => {
+                                if (change.type === 'added') {
+                                    const d = change.doc.data();
+                                    sendPush('新增例會通知', `${d.companyName || ''} ${d.type || '例會'} ${d.date || ''} ${d.time || ''}`);
+                                }
+                            });
+                        }
+                        firstMeetings = false;
+                    }));
 
                     const qOverviewDistrictMeetings = query(collection(db, 'artifacts', appId, 'public', 'data', 'overview_district_meetings'));
-                    unsubscribes.push(onSnapshot(qOverviewDistrictMeetings, (snap) => setOverviewDistrictMeetings(snap.docs.map(d => ({ id: d.id, ...d.data() })))));
+                    let firstDistrict = true;
+                    unsubscribes.push(onSnapshot(qOverviewDistrictMeetings, (snap) => {
+                        setOverviewDistrictMeetings(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                        if (!firstDistrict) {
+                            snap.docChanges().forEach(change => {
+                                if (change.type === 'added') {
+                                    const d = change.doc.data();
+                                    sendPush('新增區大通知', `${d.companyName || ''} ${d.type || '區大'} ${d.date || ''} ${d.time || ''}`);
+                                }
+                            });
+                        }
+                        firstDistrict = false;
+                    }));
 
                     const qOverviewActivities = query(collection(db, 'artifacts', appId, 'public', 'data', 'overview_activities'));
-                    unsubscribes.push(onSnapshot(qOverviewActivities, (snap) => setOverviewActivities(snap.docs.map(d => ({ id: d.id, ...d.data() })))));
+                    let firstActivities = true;
+                    unsubscribes.push(onSnapshot(qOverviewActivities, (snap) => {
+                        setOverviewActivities(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                        if (!firstActivities) {
+                            snap.docChanges().forEach(change => {
+                                if (change.type === 'added') {
+                                    const d = change.doc.data();
+                                    sendPush('新增活動通知', `${d.companyName || ''} ${d.type || '活動'} ${d.date || ''} ${d.time || ''}`);
+                                }
+                            });
+                        }
+                        firstActivities = false;
+                    }));
 
                     const qOverviewPresentations = query(collection(db, 'artifacts', appId, 'public', 'data', 'overview_presentations'));
-                    unsubscribes.push(onSnapshot(qOverviewPresentations, (snap) => setOverviewPresentations(snap.docs.map(d => ({ id: d.id, ...d.data() })))));
+                    let firstPresentations = true;
+                    unsubscribes.push(onSnapshot(qOverviewPresentations, (snap) => {
+                        setOverviewPresentations(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                        if (!firstPresentations) {
+                            snap.docChanges().forEach(change => {
+                                if (change.type === 'added') {
+                                    const d = change.doc.data();
+                                    sendPush('新增簡報通知', `${d.companyName || ''} ${d.type || '簡報'} ${d.date || ''} ${d.time || ''}`);
+                                }
+                            });
+                        }
+                        firstPresentations = false;
+                    }));
                 }
 
                 return () => unsubscribes.forEach(u => u());
@@ -9715,7 +9807,7 @@
                                                         onChange={(e) => {
                                                             const isChecked = e.target.checked;
                                                             setEnableSystemNotification(isChecked);
-                                                            if (isChecked && Notification.permission !== 'granted') {
+                                                            if (isChecked && 'Notification' in window && Notification.permission !== 'granted') {
                                                                 Notification.requestPermission().then(perm => {
                                                                     setNotificationPermission(perm);
                                                                     if (perm !== 'granted') {
@@ -9723,6 +9815,9 @@
                                                                         setEnableSystemNotification(false);
                                                                     }
                                                                 });
+                                                            } else if (isChecked && !('Notification' in window)) {
+                                                                setToast('此裝置不支援通知');
+                                                                setEnableSystemNotification(false);
                                                             }
                                                         }}
                                                     />
@@ -10975,6 +11070,11 @@
                                         onClick={async () => {
                                             const ICON_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAALUlEQVRYR+3QQREAAAgCMPy7aQo38AB1sJvp268BBAQEBAQEBAQEBAQEBAQEHguWfwJ/eXw6OAAAAABJRU5ErkJggg==';
                                             try {
+                                                if (!('Notification' in window)) {
+                                                    setToast('此裝置不支援通知');
+                                                    return;
+                                                }
+
                                                 if (Notification.permission !== 'granted') {
                                                     const perm = await Notification.requestPermission();
                                                     setNotificationPermission(perm);
@@ -11010,13 +11110,15 @@
                                                 }
                                                 
                                                 // 2. Fallback to standard Notification API
-                                                const n = new Notification('測試通知 (API)', { 
-                                                    body: '這是透過標準 API 發送的通知',
-                                                    icon: ICON_DATA_URL,
-                                                    badge: ICON_DATA_URL
-                                                });
-                                                n.onclick = () => window.focus();
-                                                setToast('標準 API 通知已發送');
+                                                if ('Notification' in window) {
+                                                    const n = new Notification('測試通知 (API)', { 
+                                                        body: '這是透過標準 API 發送的通知',
+                                                        icon: ICON_DATA_URL,
+                                                        badge: ICON_DATA_URL
+                                                    });
+                                                    n.onclick = () => window.focus();
+                                                    setToast('標準 API 通知已發送');
+                                                }
                                                 
                                             } catch (e) {
                                                 console.error('Test Notification Error:', e);
@@ -14865,6 +14967,10 @@
                                                     {notificationPermission === 'default' && (
                                                         <button 
                                                             onClick={() => {
+                                                                if (!('Notification' in window)) {
+                                                                    setToast('此裝置不支援通知');
+                                                                    return;
+                                                                }
                                                                 Notification.requestPermission().then(perm => {
                                                                     setNotificationPermission(perm);
                                                                 });
