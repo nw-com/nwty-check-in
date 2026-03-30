@@ -278,6 +278,60 @@ const checkAndNotifyCommunityAnomalies = async () => {
   return { ok: true, date: todayStr, sent };
 };
 
+const deriveCompanyNameFromCommunityId = (communityId) => {
+  const cid = String(communityId || '').trim().toUpperCase();
+  if (!cid) return '';
+  if (cid.startsWith('A') || cid.startsWith('B')) return '台北公司';
+  if (cid.startsWith('C')) return '桃園公司';
+  return '';
+};
+
+let directoryCache = { ts: 0, users: [], roles: [], companies: [] };
+const getDirectory = async (db) => {
+  const now = Date.now();
+  if (directoryCache.ts && (now - directoryCache.ts) < 60_000) return directoryCache;
+  const [usersSnap, rolesSnap, companiesSnap] = await Promise.all([
+    getPublicDataCollection(db, 'users').get(),
+    getPublicDataCollection(db, 'roles').get(),
+    getPublicDataCollection(db, 'companies').get(),
+  ]);
+  directoryCache = {
+    ts: now,
+    users: usersSnap.docs.map(d => ({ id: d.id, ...d.data() })),
+    roles: rolesSnap.docs.map(d => ({ id: d.id, ...d.data() })),
+    companies: companiesSnap.docs.map(d => ({ id: d.id, ...d.data() })),
+  };
+  return directoryCache;
+};
+
+const getUserRoleName = (u, roles) => {
+  const rawRole = String(u?.role || '').trim().toLowerCase();
+  if (rawRole === 'admin') return '系統管理員';
+  const roleDoc = (roles || []).find(r => String(r.id) === String(u?.role));
+  return String(roleDoc?.name || u?.roleName || u?.role || '').trim();
+};
+
+const getUserCompanyName = (u, companies) => {
+  const ids = Array.isArray(u?.companyIds) ? u.companyIds : [];
+  const companyId = ids.length > 0 ? ids[0] : (u?.companyId || '');
+  const comp = (companies || []).find(c => String(c.id) === String(companyId));
+  return String(comp?.name || u?.companyName || '').trim();
+};
+
+const isActiveUser = (u) => {
+  const status = String(u?.status || '').trim();
+  return status === '' || status === '在職';
+};
+
+const matchCompanyName = (userCompanyName, targetCompanyName) => {
+  const a = String(userCompanyName || '');
+  const b = String(targetCompanyName || '');
+  if (!a || !b) return false;
+  if (b.includes('台北')) return a.includes('台北');
+  if (b.includes('桃園')) return a.includes('桃園');
+  return a === b;
+};
+
 const mimeTypes = {
   '.html': 'text/html',
   '.js': 'text/javascript',
@@ -442,6 +496,129 @@ const handlePublicCommunityName = async (req, res) => {
   }
 };
 
+const handlePublicSubmitFeedback = async (req, res) => {
+  if (req.method !== 'POST') {
+    res.writeHead(405, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('Method Not Allowed');
+    return;
+  }
+
+  const db = getArtifactsDb();
+  if (!db) {
+    sendJson(res, 500, { ok: false, message: 'Firebase Admin not initialized' });
+    return;
+  }
+
+  let body;
+  try {
+    body = await readJsonBody(req);
+  } catch (e) {
+    sendJson(res, 400, { ok: false, message: e.message || 'Bad Request' });
+    return;
+  }
+
+  const payload = body || {};
+  const communityId = String(payload.communityId || '').trim();
+  const communityName = String(payload.communityName || '').trim();
+  const residentName = String(payload.residentName || '').trim();
+  const residentPhone = String(payload.residentPhone || '').trim();
+  const residentEmail = String(payload.residentEmail || '').trim();
+  const residentFeedback = String(payload.residentFeedback || '').trim();
+
+  if (!residentName || !residentPhone || !residentFeedback) {
+    sendJson(res, 400, { ok: false, message: 'Missing required fields' });
+    return;
+  }
+
+  const companyName = deriveCompanyNameFromCommunityId(communityId);
+  let recipients = [];
+  try {
+    const dir = await getDirectory(db);
+    const users = Array.isArray(dir.users) ? dir.users : [];
+    const roles = Array.isArray(dir.roles) ? dir.roles : [];
+    const companies = Array.isArray(dir.companies) ? dir.companies : [];
+
+    for (const u of users) {
+      if (!u || !isActiveUser(u)) continue;
+      const roleKey = String(u.role || '').trim().toLowerCase();
+      const roleName = getUserRoleName(u, roles);
+      const uCompanyName = getUserCompanyName(u, companies);
+
+      const isAdmin = roleKey === 'admin' || roleName.includes('系統管理員');
+      const isManager = roleKey === 'manager' || roleName.includes('管理');
+      const isHr = roleKey === 'hr' || roleName.includes('人事');
+      const isProperty = roleKey === 'property' || roleName.includes('物業');
+      const isCadre = roleKey === 'cadre' || roleName.includes('幹部');
+
+      if (isAdmin || isManager || isHr) {
+        const name = String(u.name || '').trim();
+        if (name) recipients.push(name);
+        continue;
+      }
+
+      if ((isProperty || isCadre) && matchCompanyName(uCompanyName, companyName)) {
+        const name = String(u.name || '').trim();
+        if (name) recipients.push(name);
+      }
+    }
+  } catch (e) {
+    console.error('Submit feedback directory error:', e);
+    recipients = [];
+  }
+
+  recipients = Array.from(new Set(recipients));
+
+  const content = [
+    '【客服意見反應】',
+    companyName ? `公司：${companyName}` : null,
+    (communityName || communityId) ? `社區：${communityName || communityId}` : '社區：未知',
+    residentName ? `住戶：${residentName}` : null,
+    residentPhone ? `電話：${residentPhone}` : null,
+    residentEmail ? `Email：${residentEmail}` : null,
+    residentFeedback ? `內容：${residentFeedback}` : '內容：無',
+  ].filter(Boolean).join('\n');
+
+  try {
+    const feedbackRef = db.collection('feedbacks').doc();
+    const notificationsRef = getPublicDataCollection(db, 'notifications');
+    const notifRef = notificationsRef.doc();
+    const batch = db.batch();
+
+    batch.set(feedbackRef, {
+      communityId,
+      communityName,
+      residentName,
+      residentPhone,
+      residentEmail,
+      residentFeedback,
+      status: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      source: 'public_api',
+    });
+
+    if (recipients.length > 0) {
+      batch.set(notifRef, {
+        target: recipients.join('、'),
+        content,
+        senderName: '客服系統',
+        senderId: 'server',
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        source: 'server',
+        type: 'feedback',
+        feedbackId: feedbackRef.id,
+        companyName,
+        communityId: communityId || '',
+      });
+    }
+
+    await batch.commit();
+    sendJson(res, 200, { ok: true, id: feedbackRef.id, notifiedTo: recipients });
+  } catch (e) {
+    console.error('Submit feedback error:', e);
+    sendJson(res, 500, { ok: false, message: e.message || 'Internal server error' });
+  }
+};
+
 const server = http.createServer((req, res) => {
   // Log requests only when enabled, and skip known noisy paths
   const urlPath = req.url.split('?')[0];
@@ -452,6 +629,11 @@ const server = http.createServer((req, res) => {
   // API Routes
   if (urlPath === '/api/public/community-name') {
     handlePublicCommunityName(req, res);
+    return;
+  }
+
+  if (urlPath === '/api/public/submit-feedback') {
+    handlePublicSubmitFeedback(req, res);
     return;
   }
 
