@@ -9616,6 +9616,14 @@
             const [settingsSubtab, setSettingsSubtab] = useState('account');
             const [applicationSubtab, setApplicationSubtab] = useState('signature');
             const [functionSubtab, setFunctionSubtab] = useState('log');
+            const [functionRegionFilter, setFunctionRegionFilter] = useState(() => {
+                try {
+                    const v = localStorage.getItem('function_region_filter') || '';
+                    return ['台北', '新北', '桃園'].includes(v) ? v : '全部';
+                } catch {
+                    return '全部';
+                }
+            });
             const [functionDownloadItems, setFunctionDownloadItems] = useState([]);
             const [functionDownloadLoaded, setFunctionDownloadLoaded] = useState(false);
             const [functionDownloadLoading, setFunctionDownloadLoading] = useState(false);
@@ -9751,9 +9759,76 @@
                     setFunctionDownloadItems(Array.isArray(json.items) ? json.items : []);
                     setFunctionDownloadLoaded(true);
                 } catch (e) {
-                    setFunctionDownloadError(e && e.message ? e.message : '載入失敗');
-                    setFunctionDownloadItems([]);
-                    setFunctionDownloadLoaded(false);
+                    try {
+                        const host = String(window.location.hostname || '');
+                        const isGitHubPages = host.endsWith('github.io');
+                        if (isGitHubPages) {
+                            const owner = host.split('.')[0] || '';
+                            const pathParts = String(window.location.pathname || '').split('/').filter(Boolean);
+                            const firstSeg = pathParts[0] && !String(pathParts[0]).includes('.') ? String(pathParts[0]) : '';
+                            const repo = firstSeg || `${owner}.github.io`;
+                            const basePath = firstSeg ? `/${firstSeg}/` : '/';
+
+                            const repoInfoRes = await fetch(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`, { cache: 'no-store' });
+                            const repoInfo = await repoInfoRes.json().catch(() => ({}));
+                            const branch = String(repoInfo.default_branch || 'main');
+
+                            const encodeUrlPath = (p) => {
+                                return String(p || '')
+                                    .split(/[\\/]/g)
+                                    .filter(Boolean)
+                                    .map(encodeURIComponent)
+                                    .join('/');
+                            };
+
+                            const listDir = async (dirPath, depth) => {
+                                const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodeURIComponent(dirPath)}?ref=${encodeURIComponent(branch)}`;
+                                const r = await fetch(url, { cache: 'no-store' });
+                                const arr = await r.json().catch(() => []);
+                                if (!r.ok || !Array.isArray(arr)) return [];
+
+                                const nodes = [];
+                                for (const item of arr) {
+                                    const name = String(item.name || '');
+                                    const type = String(item.type || '');
+                                    const fullPath = String(item.path || '');
+                                    if (!name || name.startsWith('.')) continue;
+                                    const rel = fullPath.startsWith('data/') ? fullPath.slice(5) : fullPath;
+                                    if (type === 'dir') {
+                                        const children = depth > 0 ? await listDir(fullPath, depth - 1) : [];
+                                        nodes.push({ name, path: rel, type: 'directory', children });
+                                    } else if (type === 'file') {
+                                        nodes.push({
+                                            name,
+                                            path: rel,
+                                            type: 'file',
+                                            size: typeof item.size === 'number' ? item.size : null,
+                                            url: item.download_url || `${basePath}data/${encodeUrlPath(rel)}`,
+                                        });
+                                    }
+                                }
+
+                                nodes.sort((a, b) => {
+                                    if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
+                                    return String(a.name).localeCompare(String(b.name), 'zh-Hant', { numeric: true, sensitivity: 'base' });
+                                });
+                                return nodes;
+                            };
+
+                            const items = await listDir('data', 6);
+                            setFunctionDownloadItems(items);
+                            setFunctionDownloadLoaded(true);
+                            setFunctionDownloadError('');
+                        } else {
+                            setFunctionDownloadError(e && e.message ? e.message : '載入失敗');
+                            setFunctionDownloadItems([]);
+                            setFunctionDownloadLoaded(false);
+                        }
+                    } catch (e2) {
+                        setFunctionDownloadError(e2 && e2.message ? e2.message : (e && e.message ? e.message : '載入失敗'));
+                        setFunctionDownloadItems([]);
+                        setFunctionDownloadLoaded(false);
+                    }
                 } finally {
                     setFunctionDownloadLoading(false);
                 }
@@ -9768,6 +9843,55 @@
             const toggleFunctionDownloadFolder = (p) => {
                 const key = String(p || '');
                 setFunctionDownloadExpanded(prev => ({ ...prev, [key]: !prev[key] }));
+            };
+
+            const getRegionByCommunityId = (cid) => {
+                const v = String(cid || '').trim().toUpperCase();
+                if (v.startsWith('A')) return '台北';
+                if (v.startsWith('B')) return '新北';
+                if (v.startsWith('C')) return '桃園';
+                return '';
+            };
+
+            const downloadFunctionFile = async (url, filename) => {
+                const u = String(url || '').trim();
+                if (!u) return;
+                const name = String(filename || 'download').trim() || 'download';
+                const isSameOrigin = u.startsWith('/') || u.startsWith(location.origin);
+                const ua = String(navigator.userAgent || '');
+                const isIOS = /iP(hone|od|ad)/i.test(ua);
+                const supportsDownload = 'download' in document.createElement('a');
+                if (isIOS || !supportsDownload) {
+                    if (isSameOrigin) {
+                        window.location.href = u;
+                    } else {
+                        window.open(u, '_blank', 'noopener');
+                    }
+                    return;
+                }
+                try {
+                    const res = await fetch(u, { cache: 'no-store' });
+                    if (!res.ok) throw new Error('下載失敗');
+                    const blob = await res.blob();
+                    const objectUrl = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = objectUrl;
+                    a.download = name;
+                    a.rel = 'noopener';
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    URL.revokeObjectURL(objectUrl);
+                } catch (_) {
+                    const a = document.createElement('a');
+                    a.href = u;
+                    a.download = name;
+                    a.rel = 'noopener';
+                    a.target = '_blank';
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                }
             };
 
             const renderFunctionDownloadNodes = (nodes, depth = 0) => {
@@ -9791,15 +9915,13 @@
                                     <div className="text-sm font-bold text-gray-800 truncate">{n.name}</div>
                                 </div>
                                 {!isDir && n.url && (
-                                    <a
-                                        href={n.url}
+                                    <button
+                                        type="button"
                                         className="px-3 py-1.5 rounded-xl bg-red-50 text-red-600 text-xs font-bold hover:bg-red-100"
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        onClick={(e) => e.stopPropagation()}
+                                        onClick={(e) => { e.stopPropagation(); downloadFunctionFile(n.url, n.name); }}
                                     >
                                         下載
-                                    </a>
+                                    </button>
                                 )}
                             </div>
                             {isDir && expanded && (
@@ -10203,8 +10325,8 @@
                 const el = document.getElementById('attendance-report');
                 if (!el) return;
 
-                let csvContent = '';
-                let filename = '報表.csv';
+                let sheetData = [];
+                let filename = '報表.xlsx';
                 const reportDateStr = (reportContext === 'community' ? communityReportDate : cadreRecordDate) || '';
                 const ym = reportDateStr.split('-').slice(0,2).join('-');
                 const selectedUserId = reportContext === 'community' ? communityMapSelectedUserId : cadreMapSelectedUserId;
@@ -10238,11 +10360,11 @@
                         });
                         rows.push(rowData);
                     }
-                    
-                    csvContent = rows.map(r => r.map(v => `"${(v||'').replace(/"/g,'""')}"`).join(',')).join('\r\n');
+
+                    sheetData = rows;
                     filename = reportContext === 'community'
-                        ? `${ym}_${communityName || '社區'}_出勤月報表.csv`
-                        : `${ym}_${cadreCompany || '公司'}_出勤月報表.csv`;
+                        ? `${ym}_${communityName || '社區'}_出勤月報表.xlsx`
+                        : `${ym}_${cadreCompany || '公司'}_出勤月報表.xlsx`;
                     
                 } else {
                     // Vertical List Reports (Card, Outing, Leave)
@@ -10260,19 +10382,30 @@
                         return Array.from(row.children).map(c => (c.textContent || '').replace(/\s+/g, ' ').trim());
                     });
 
-                    csvContent = [header, ...data].map(r => r.map(v => `"${(v||'').replace(/"/g,'""')}"`).join(',')).join('\r\n');
+                    sheetData = [header, ...data];
                     
                     const u = usersList.find(x => x.id === selectedUserId);
                     const typeMap = { 'duty': '卡班', 'card': '卡班', 'outing': '外出', 'leave': '請假' };
                     const typeName = typeMap[reportModalType] || '報表';
-                    filename = `${ym}_${u?.name || ''}_${typeName}月報表.csv`;
+                    filename = `${ym}_${u?.name || ''}_${typeName}月報表.xlsx`;
                 }
 
+                try {
+                    if (window.XLSX && window.XLSX.utils && window.XLSX.writeFile) {
+                        const ws = window.XLSX.utils.aoa_to_sheet(sheetData || [[]]);
+                        const wb = window.XLSX.utils.book_new();
+                        window.XLSX.utils.book_append_sheet(wb, ws, '報表');
+                        window.XLSX.writeFile(wb, filename);
+                        return;
+                    }
+                } catch {}
+
+                const csvContent = (sheetData || []).map(r => (r || []).map(v => `"${String(v || '').replace(/"/g,'""')}"`).join(',')).join('\r\n');
                 const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = filename;
+                a.download = filename.replace(/\.xlsx$/i, '.csv');
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);
@@ -21767,9 +21900,33 @@
                                                 const ids = Array.from(new Set((dbUser.communityIds || []).map(x => String(x).trim()).filter(Boolean)));
                                                 const myComms = ids.map(id => (communities || []).find(c => String(c.id) === String(id))).filter(Boolean);
                                                 if (myComms.length === 0) return <div className="text-center py-8 text-gray-400">無服務社區</div>;
+                                                const filteredComms = functionRegionFilter === '全部'
+                                                    ? myComms
+                                                    : myComms.filter(c => getRegionByCommunityId(c.id) === functionRegionFilter);
                                                 return (
-                                                    <div className="grid grid-cols-5 gap-2">
-                                                        {myComms.map(c => {
+                                                    <div className="space-y-3">
+                                                        <div className="flex items-center gap-2">
+                                                            {['台北', '新北', '桃園'].map(r => (
+                                                                <button
+                                                                    key={r}
+                                                                    type="button"
+                                                                    onClick={() => {
+                                                                        const next = functionRegionFilter === r ? '全部' : r;
+                                                                        setFunctionRegionFilter(next);
+                                                                        try { localStorage.setItem('function_region_filter', next); } catch {}
+                                                                    }}
+                                                                    className={`px-3 py-2 text-xs font-bold rounded-2xl ${functionRegionFilter === r ? 'bg-red-50 text-red-600' : 'bg-gray-50 text-gray-700'} whitespace-nowrap`}
+                                                                >
+                                                                    {r}
+                                                                </button>
+                                                            ))}
+                                                        </div>
+
+                                                        {filteredComms.length === 0 ? (
+                                                            <div className="text-center py-8 text-gray-400 font-bold">無符合社區</div>
+                                                        ) : (
+                                                            <div className="grid grid-cols-5 gap-2">
+                                                                {filteredComms.map(c => {
                                                             const name = c.name || '';
                                                             const short = name.slice(0, 4);
                                                             const top = short.slice(0, 2);
@@ -21785,7 +21942,9 @@
                                                                     </button>
                                                                 </div>
                                                             );
-                                                        })}
+                                                                })}
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 );
                                             })()}
@@ -21801,9 +21960,35 @@
                                                 const ids = Array.from(new Set((dbUser.communityIds || []).map(x => String(x).trim()).filter(Boolean)));
                                                 const myComms = ids.map(id => (communities || []).find(c => String(c.id) === String(id))).filter(Boolean);
                                                 if (myComms.length === 0) return <div className="text-center py-8 text-gray-400">無服務社區</div>;
+
+                                                const filteredComms = functionRegionFilter === '全部'
+                                                    ? myComms
+                                                    : myComms.filter(c => getRegionByCommunityId(c.id) === functionRegionFilter);
+
                                                 return (
-                                                    <div className="grid grid-cols-5 gap-2">
-                                                        {myComms.map(c => {
+                                                    <div className="space-y-3">
+                                                        <div className="flex items-center gap-2">
+                                                            {['台北', '新北', '桃園'].map(r => (
+                                                                <button
+                                                                    key={r}
+                                                                    type="button"
+                                                                    onClick={() => {
+                                                                        const next = functionRegionFilter === r ? '全部' : r;
+                                                                        setFunctionRegionFilter(next);
+                                                                        try { localStorage.setItem('function_region_filter', next); } catch {}
+                                                                    }}
+                                                                    className={`px-3 py-2 text-xs font-bold rounded-2xl ${functionRegionFilter === r ? 'bg-red-50 text-red-600' : 'bg-gray-50 text-gray-700'} whitespace-nowrap`}
+                                                                >
+                                                                    {r}
+                                                                </button>
+                                                            ))}
+                                                        </div>
+
+                                                        {filteredComms.length === 0 ? (
+                                                            <div className="text-center py-8 text-gray-400 font-bold">無符合社區</div>
+                                                        ) : (
+                                                            <div className="grid grid-cols-5 gap-2">
+                                                                {filteredComms.map(c => {
                                                             const name = c.name || '';
                                                             const short = name.slice(0, 4);
                                                             const top = short.slice(0, 2);
@@ -21819,7 +22004,9 @@
                                                                     </button>
                                                                 </div>
                                                             );
-                                                        })}
+                                                                })}
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 );
                                             })()}
@@ -21855,7 +22042,17 @@
                                                     <div className="text-center py-8 text-gray-400 font-bold">載入中...</div>
                                                 )}
                                                 {!functionDownloadLoading && !!functionDownloadError && (
-                                                    <div className="text-center py-8 text-red-500 font-bold">{functionDownloadError}</div>
+                                                    <div className="text-center py-8 space-y-3">
+                                                        <div className="text-red-500 font-bold">{functionDownloadError}</div>
+                                                        <a
+                                                            href="https://drive.google.com/drive/folders/14pNiokBNDJ0T7mtFRxPX-WRGcjmWnnVN?usp=sharing"
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="inline-flex w-full items-center justify-center bg-red-600 text-white py-3 rounded-2xl font-bold hover:bg-red-700 transition shadow-lg shadow-red-100"
+                                                        >
+                                                            表格下載
+                                                        </a>
+                                                    </div>
                                                 )}
                                                 {!functionDownloadLoading && !functionDownloadError && (functionDownloadItems || []).length === 0 && (
                                                     <div className="text-center py-8 text-gray-400 font-bold">尚無可下載文件</div>
@@ -27000,12 +27197,43 @@
                                                 <div className="min-w-[1200px]">
                                                     <div className="mb-4 print:hidden">
                                                         {(function(){
+                                                            const monthStart = new Date(targetYear, targetMonth, 1, 0, 0, 0);
+                                                            const monthEnd = new Date(targetYear, targetMonth + 1, 0, 23, 59, 59);
+                                                            const monthAttendanceUserIds = new Set(attendanceList.filter(r => {
+                                                                const ts = r.timestamp?.seconds;
+                                                                if (!ts) return false;
+                                                                const d = new Date(ts * 1000);
+                                                                return d >= monthStart && d <= monthEnd;
+                                                            }).map(r => r.userId).filter(Boolean));
+
+                                                            const resolveRoleName = (u) => {
+                                                                const fromUser = String(u?.roleName || '').trim();
+                                                                if (fromUser) return fromUser;
+                                                                const fromRoles = String((roles || []).find(r => String(r.id) === String(u?.role))?.name || '').trim();
+                                                                if (fromRoles) return fromRoles;
+                                                                const key = String(u?.role || '').trim().toLowerCase();
+                                                                const map = {
+                                                                    admin: '系統管理員',
+                                                                    hr: '人事',
+                                                                    property: '物業',
+                                                                    cadre: '幹部',
+                                                                    staff: '員工',
+                                                                    employee: '員工'
+                                                                };
+                                                                return map[key] || '';
+                                                            };
+
+                                                            const allowedRoleNames = new Set(['系統管理員', '人事', '物業', '幹部', '員工']);
+
                                                             const filteredUsers = usersList.filter(u => {
                                                                 if (u.name === '蔡總') return false;
+                                                                if (!monthAttendanceUserIds.has(u.id)) return false;
+                                                                if (!allowedRoleNames.has(resolveRoleName(u))) return false;
                                                                 
-                                                                if (cadreCompany) {
-                                                                    // 1. Resolve Cadre Company to ID
-                                                                    const targetComp = companies.find(c => c.name === cadreCompany);
+                                                                const targetCompanyName = cadreCompany || dbUser.companyName || dbUser.company || '';
+                                                                if (targetCompanyName) {
+                                                                    // 1. Resolve Company Name to ID
+                                                                    const targetComp = companies.find(c => c.name === targetCompanyName);
                                                                     
                                                                     // 2. Check for ID Match (Primary)
                                                                     if (targetComp) {
@@ -27017,7 +27245,7 @@
                                                                     // 3. Check for Name Match (Legacy/Fallback)
                                                                     const normalize = (s) => (s || '').replace('公司', '').trim();
                                                                     const uComp = normalize(u.company);
-                                                                    const cComp = normalize(cadreCompany);
+                                                                    const cComp = normalize(targetCompanyName);
                                                                     
                                                                     if (uComp === cComp && uComp !== '') return true;
                                                                     
@@ -27025,18 +27253,20 @@
                                                                 }
                                                                 return true;
                                                             });
+
+                                                            const selectedVisibleCount = reportSelectedUserIds.filter(id => filteredUsers.some(u => u.id === id)).length;
                                                             
                                                             return (
                                                                 <>
                                                                     <label className="flex items-center gap-2 mb-2 font-bold cursor-pointer text-sm">
                                                                         <input type="checkbox" 
-                                                                            checked={reportSelectedUserIds.length > 0 && reportSelectedUserIds.length === filteredUsers.length}
+                                                                            checked={filteredUsers.length > 0 && selectedVisibleCount === filteredUsers.length}
                                                                             onChange={(e) => {
                                                                                 if (e.target.checked) setReportSelectedUserIds(filteredUsers.map(u=>u.id));
                                                                                 else setReportSelectedUserIds([]);
                                                                             }}
                                                                         />
-                                                                        全選 (已選 {reportSelectedUserIds.length} 人)
+                                                                        全選 (已選 {selectedVisibleCount} 人)
                                                                     </label>
                                                                     <div className="flex flex-nowrap overflow-x-auto gap-2 border border-gray-200 p-2 rounded-xl bg-gray-50 items-center">
                                                                         {filteredUsers.map(u => (
