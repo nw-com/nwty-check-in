@@ -7,12 +7,36 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>月出勤總覽</title>
+    <script>
+        (function () {
+            const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+            if (!isLocal) return;
+            const params = new URLSearchParams(location.search);
+            if (params.get('nocache') === '1') return;
+            params.set('nocache', '1');
+            Promise.resolve()
+                .then(async () => {
+                    if ('serviceWorker' in navigator) {
+                        const regs = await navigator.serviceWorker.getRegistrations();
+                        await Promise.all(regs.map((r) => r.unregister()));
+                    }
+                    if ('caches' in window) {
+                        const keys = await caches.keys();
+                        await Promise.all(keys.filter((k) => k.startsWith('nw-checkin-')).map((k) => caches.delete(k)));
+                    }
+                })
+                .finally(() => {
+                    location.replace(`${location.pathname}?${params.toString()}${location.hash}`);
+                });
+        })();
+    </script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="./firebase-config.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
         html, body {
@@ -192,7 +216,12 @@
                     <span id="table-month-label" class="inline-flex items-center rounded-full bg-red-50 border border-red-100 px-3 py-1 text-xs font-black text-red-700 whitespace-nowrap">----</span>
                     <h2 class="font-black text-gray-800 whitespace-nowrap">月出勤表</h2>
                 </div>
-                <span id="table-caption" class="text-xs text-gray-500">載入中...</span>
+                <div class="flex items-center gap-2">
+                    <button id="download-excel-btn" type="button" class="h-8 px-3 rounded-lg bg-green-600 text-white text-xs font-black hover:bg-green-700 transition-colors whitespace-nowrap">
+                        下載Excel
+                    </button>
+                    <span id="table-caption" class="text-xs text-gray-500 whitespace-nowrap">載入中...</span>
+                </div>
             </div>
 
             <div id="loading-box" class="flex-1 p-8 text-center text-gray-400">
@@ -216,8 +245,9 @@
 
     <script>
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-attendance-app';
+        const swScriptVersion = 'v2.0.123';
         const inTypes = new Set(['in', 'work_in', 'duty_in', 'late_in', 'card_in']);
-        const outTypes = new Set(['out', 'work_out', 'duty_out', 'late_out', 'card_out']);
+        const outTypes = new Set(['out', 'work_out', 'duty_out', 'late_out', 'card_out', 'leave_early']);
         const holidayNameMap = {
             '2025-01-01': '元旦',
             '2025-01-25': '春節', '2025-01-26': '春節', '2025-01-27': '春節', '2025-01-28': '春節', '2025-01-29': '春節', '2025-01-30': '春節', '2025-01-31': '春節', '2025-02-01': '春節', '2025-02-02': '春節',
@@ -530,6 +560,25 @@
             return resignDate.getTime() >= getMonthStartDate(monthKey).getTime();
         }
 
+        function getProfileStartDateKey(profile) {
+            const startDate = parseDateValue(
+                profile?.startDate ||
+                profile?.onboardDate ||
+                profile?.joinDate ||
+                profile?.hireDate
+            );
+            if (!startDate) return '';
+            return formatDate(startDate);
+        }
+
+        function getProfileResignDateKey(profile) {
+            const status = safeText(profile?.status, '在職');
+            if (status !== '離職') return '';
+            const resignDate = parseDateValue(profile?.resignDate || profile?.resignAt || profile?.resignationDate);
+            if (!resignDate) return '';
+            return formatDate(resignDate);
+        }
+
         function formatMonthLabel(monthKey) {
             if (!monthKey) return '尚未設定';
             const [year, month] = monthKey.split('-');
@@ -673,6 +722,10 @@
         }
 
         function isRestrictedScheduleLabel(label) {
+            return ['假日', '特休', '補休', '指休', '颱風假', '未到職', '已離職'].includes(String(label || '').trim());
+        }
+
+        function isHolidayScheduleLabel(label) {
             return ['假日', '特休', '補休', '指休', '颱風假'].includes(String(label || '').trim());
         }
 
@@ -737,8 +790,8 @@
 
         function getDirectoryUserKey(profile) {
             return String(
-                profile?.uid ||
                 profile?.id ||
+                profile?.uid ||
                 profile?.email ||
                 profile?.name ||
                 ''
@@ -1116,7 +1169,7 @@
             };
         }
 
-        const monthlySummaryHeaders = ['上班時數', '請假時數', '特休天數', '曠職時數', '遲到次數', '早退次數'];
+        const monthlySummaryHeaders = ['班表時數', '實際時數', '請假時數', '特休天數', '曠職時數', '遲到次數', '早退次數'];
 
         function parseTimeToMinutes(value) {
             const raw = String(value || '').trim();
@@ -1147,12 +1200,16 @@
         }
 
         function getDailyWorkMinutes(cell) {
+            if (isRestrictedScheduleLabel(cell?.scheduleLabel)) return 0;
             const scheduledMinutes = getScheduledMinutes(cell);
             const hasInClock = Boolean(cell?.inTime);
             const hasOutClock = Boolean(cell?.outTime);
             if (!hasInClock || !hasOutClock) return 0;
             const workedMinutes = getWorkedMinutes(cell);
-            return scheduledMinutes > 0 ? Math.min(workedMinutes, scheduledMinutes) : workedMinutes;
+            if (scheduledMinutes <= 0) return workedMinutes;
+            const leaveMinutes = cell?.leaveLabel ? getLeaveMinutes(cell) : 0;
+            const effectiveScheduledMinutes = Math.max(0, scheduledMinutes - leaveMinutes);
+            return Math.min(workedMinutes, effectiveScheduledMinutes);
         }
 
         function getLeaveMinutes(cell) {
@@ -1190,6 +1247,32 @@
             return scheduledMinutes || (4 * 60);
         }
 
+        function isLateInCell(cell) {
+            if (cell?.leaveLabel) return false;
+            const scheduledIn = parseTimeToMinutes(cell?.scheduledInTime);
+            const actualIn = parseTimeToMinutes(cell?.inTime);
+            if (!Number.isFinite(scheduledIn) || !Number.isFinite(actualIn)) return false;
+            return actualIn > scheduledIn;
+        }
+
+        function isEarlyOutCell(cell) {
+            if (cell?.leaveLabel) return false;
+            const scheduledOut = parseTimeToMinutes(cell?.scheduledOutTime);
+            const actualOut = parseTimeToMinutes(cell?.outTime);
+            if (!Number.isFinite(scheduledOut) || !Number.isFinite(actualOut)) return false;
+            return actualOut < scheduledOut;
+        }
+
+        function formatActualTimeText(timeText, options = {}) {
+            const text = String(timeText || '').trim();
+            if (!text) return '';
+            const suffixes = [];
+            if (options.isSupplement) suffixes.push('(補)');
+            if (options.isLate) suffixes.push('(遲)');
+            if (options.isEarly) suffixes.push('(早)');
+            return `${text}${suffixes.join('')}`;
+        }
+
         function isPastDateKey(dateKey) {
             const today = new Date();
             today.setHours(0, 0, 0, 0);
@@ -1202,8 +1285,79 @@
             return (Math.max(0, minutes) / 60).toFixed(1);
         }
 
+        function roundMinutesToTenthHour(minutes) {
+            if (!Number.isFinite(minutes)) return 0;
+            return Math.max(0, Math.round(minutes / 6) * 6);
+        }
+
+        function getDailyExportText(cell) {
+            const parts = [];
+            const scheduleLabel = safeText(cell?.scheduleLabel, '').trim();
+            if (scheduleLabel) parts.push(scheduleLabel);
+            if (cell?.leaveLabel) {
+                const leaveRange = safeText(cell?.leaveRangeText, '').trim();
+                parts.push(leaveRange ? `請假 ${leaveRange}` : '請假');
+            }
+            if (cell?.inTime) {
+                parts.push(`上 ${formatActualTimeText(cell.inTime, { isSupplement: cell.inSupplement, isLate: isLateInCell(cell) })}`);
+            }
+            if (cell?.outTime) {
+                parts.push(`下 ${formatActualTimeText(cell.outTime, { isSupplement: cell.outSupplement, isEarly: isEarlyOutCell(cell) })}`);
+            }
+            if (cell?.inLocation) parts.push(`上地點 ${cell.inLocation}`);
+            if (cell?.outLocation) parts.push(`下地點 ${cell.outLocation}`);
+            return parts.filter(Boolean).join('\n');
+        }
+
+        function handleDownloadExcel() {
+            if (!window.XLSX || !window.XLSX.utils || !window.XLSX.writeFile) {
+                alert('Excel 模組尚未載入，請稍後再試');
+                return;
+            }
+
+            const monthKey = state.selectedMonth || getDefaultMonth();
+            const headers = ['姓名'];
+            for (let day = 1; day <= state.monthDays; day += 1) {
+                const dateKey = `${monthKey}-${pad2(day)}`;
+                const weekdayLabel = getWeekdayLabel(dateKey);
+                const holidayName = getHolidayName(dateKey);
+                headers.push(`${pad2(day)}${weekdayLabel}${holidayName ? ` ${holidayName}` : ''}`);
+            }
+            headers.push(...monthlySummaryHeaders);
+
+            const rows = [headers];
+            (state.filteredUsers || []).forEach((user) => {
+                const row = [safeText(user?.name, '未命名')];
+                for (let day = 1; day <= state.monthDays; day += 1) {
+                    const dateKey = `${monthKey}-${pad2(day)}`;
+                    row.push(getDailyExportText(user?.days?.[dateKey] || {}));
+                }
+                const monthlySummary = buildMonthlySummary(user);
+                row.push(
+                    formatHours(monthlySummary.scheduledMinutes),
+                    formatHours(monthlySummary.workMinutes),
+                    formatHours(monthlySummary.leaveMinutes),
+                    String(monthlySummary.specialLeaveDays),
+                    formatHours(monthlySummary.absentMinutes),
+                    String(monthlySummary.lateCount),
+                    String(monthlySummary.earlyCount)
+                );
+                rows.push(row);
+            });
+
+            const ws = window.XLSX.utils.aoa_to_sheet(rows);
+            const wb = window.XLSX.utils.book_new();
+            window.XLSX.utils.book_append_sheet(wb, ws, monthKey);
+
+            const scopeText = $('scope-filter')?.selectedOptions?.[0]?.textContent || '全部';
+            const safeScope = String(scopeText).replace(/[\\/:*?"<>|]/g, '').trim() || '全部';
+            const filename = `${monthKey}_${safeScope}_月出勤表.xlsx`;
+            window.XLSX.writeFile(wb, filename);
+        }
+
         function buildMonthlySummary(user) {
             const summary = {
+                scheduledMinutes: 0,
                 workMinutes: 0,
                 leaveMinutes: 0,
                 specialLeaveDays: 0,
@@ -1212,7 +1366,11 @@
                 earlyCount: 0
             };
 
+            const startDateKey = user?.startDateKey || getProfileStartDateKey(user?.profile);
+            const resignDateKey = user?.resignDateKey || getProfileResignDateKey(user?.profile);
             Object.entries(user?.days || {}).forEach(([dateKey, cell]) => {
+                if (startDateKey && dateKey < startDateKey) return;
+                if (resignDateKey && dateKey > resignDateKey) return;
                 const workedMinutes = getWorkedMinutes(cell);
                 const leaveMinutes = getLeaveMinutes(cell);
                 const scheduledMinutes = getScheduledMinutes(cell);
@@ -1223,7 +1381,8 @@
                 const hasMissingClock = !hasInClock || !hasOutClock;
                 const dailyWorkMinutes = getDailyWorkMinutes(cell);
 
-                summary.workMinutes += dailyWorkMinutes;
+                summary.scheduledMinutes += scheduledMinutes;
+                summary.workMinutes += roundMinutesToTenthHour(dailyWorkMinutes);
                 summary.leaveMinutes += leaveMinutes;
 
                 if (cell?.scheduleLabel === '特休') {
@@ -1237,13 +1396,13 @@
                 if (!cell?.leaveLabel) {
                     const scheduledIn = parseTimeToMinutes(cell?.scheduledInTime);
                     const actualIn = parseTimeToMinutes(cell?.inTime);
-                    if (Number.isFinite(scheduledIn) && Number.isFinite(actualIn) && actualIn > (scheduledIn + 10)) {
+                    if (Number.isFinite(scheduledIn) && Number.isFinite(actualIn) && actualIn > scheduledIn) {
                         summary.lateCount += 1;
                     }
 
                     const scheduledOut = parseTimeToMinutes(cell?.scheduledOutTime);
                     const actualOut = parseTimeToMinutes(cell?.outTime);
-                    if (Number.isFinite(scheduledOut) && Number.isFinite(actualOut) && diffMinutes(actualOut, scheduledOut) > 0) {
+                    if (Number.isFinite(scheduledOut) && Number.isFinite(actualOut) && actualOut < scheduledOut) {
                         summary.earlyCount += 1;
                     }
                 }
@@ -1335,7 +1494,25 @@
 
                 for (let day = 1; day <= state.monthDays; day += 1) {
                     const dateKey = `${state.selectedMonth}-${pad2(day)}`;
-                    const cell = user.days[dateKey] || {};
+                    let cell = user.days[dateKey] || {};
+                    if (user?.startDateKey && dateKey < user.startDateKey && !cell?.inTime && !cell?.outTime && !cell?.leaveLabel) {
+                        cell = {
+                            ...cell,
+                            scheduleLabel: '未到職',
+                            scheduledInTime: '',
+                            scheduledOutTime: '',
+                            blocksClockDisplay: true
+                        };
+                    }
+                    if (user?.resignDateKey && dateKey > user.resignDateKey && !cell?.inTime && !cell?.outTime && !cell?.leaveLabel) {
+                        cell = {
+                            ...cell,
+                            scheduleLabel: '已離職',
+                            scheduledInTime: '',
+                            scheduledOutTime: '',
+                            blocksClockDisplay: true
+                        };
+                    }
                     const status = getCellStatus(cell);
                     const isHighlighted = shouldHighlightDayColumn(dateKey);
                     const td = document.createElement('td');
@@ -1343,9 +1520,10 @@
 
                     if (status.hasIn || status.hasOut || cell.leaveLabel || cell.scheduleLabel) {
                         const isLeaveOnly = Boolean(cell.leaveLabel && !status.hasIn && !status.hasOut);
-                        const isRestrictedScheduleOnly = Boolean(cell.scheduleLabel && cell.blocksClockDisplay && !cell.leaveLabel);
+                        const isRestrictedScheduleOnly = Boolean(cell.scheduleLabel && cell.blocksClockDisplay && !cell.leaveLabel && !status.hasIn && !status.hasOut);
                         const isScheduleOnly = Boolean(cell.scheduleLabel && !cell.leaveLabel && !status.hasIn && !status.hasOut);
                         const hasLeaveColumn = Boolean(cell.leaveLabel);
+                        const isHolidayClockDay = Boolean(isHolidayScheduleLabel(cell.scheduleLabel) && (status.hasIn || status.hasOut) && !hasLeaveColumn);
                         const wrapper = document.createElement('div');
                         wrapper.className = `status-chip flex flex-col overflow-visible mx-auto rounded-xl px-1.5 py-1.5 ${hasLeaveColumn && !isLeaveOnly ? 'min-w-[198px]' : ''} ${isHighlighted ? 'bg-gray-100 border border-gray-200' : 'bg-gray-50 border border-gray-100'}`;
 
@@ -1356,7 +1534,11 @@
                                     ? 'bg-gray-200 border border-gray-300 text-red-600'
                                     : cell.scheduleLabel === '颱風假'
                                         ? 'bg-gray-200 border border-gray-300 text-gray-700'
-                                    : 'bg-violet-50 border border-violet-100 text-violet-700'
+                                    : cell.scheduleLabel === '未到職'
+                                        ? 'bg-gray-100 border border-gray-200 text-gray-500'
+                                    : cell.scheduleLabel === '已離職'
+                                        ? 'bg-gray-100 border border-gray-200 text-gray-500'
+                                        : 'bg-violet-50 border border-violet-100 text-violet-700'
                             }`;
                             scheduleTag.textContent = cell.scheduleLabel;
                             wrapper.className = `status-chip min-h-[78px] flex items-start justify-center overflow-visible mx-auto rounded-xl px-1.5 py-1.5 ${isHighlighted ? 'bg-gray-100 border border-gray-200' : 'bg-gray-50 border border-gray-100'}`;
@@ -1370,16 +1552,24 @@
                         tagRow.className = `grid ${isLeaveOnly ? 'grid-cols-1' : (hasLeaveColumn ? 'grid-cols-3' : 'grid-cols-2')} gap-1 items-start text-xs font-bold`;
 
                         if (!isLeaveOnly) {
-                            const inTag = document.createElement('span');
-                            inTag.className = `min-w-[58px] rounded-lg px-2 py-0.5 leading-none ${status.hasIn ? 'bg-green-50 border border-green-100 text-green-700' : 'bg-gray-100 border border-gray-200 text-gray-400'} ${isHighlighted ? 'text-red-600 border-red-200' : ''}`;
-                            inTag.textContent = '上';
+                            if (isHolidayClockDay) {
+                                tagRow.className = 'grid grid-cols-1 gap-1 items-start text-xs font-bold';
+                                const scheduleTag = document.createElement('span');
+                                scheduleTag.className = `min-w-[58px] rounded-lg px-2 py-0.5 leading-none bg-gray-200 border border-gray-300 ${cell.scheduleLabel === '颱風假' ? 'text-gray-700' : (isHighlighted || cell.scheduleLabel === '假日' ? 'text-red-600' : 'text-gray-800')}`;
+                                scheduleTag.textContent = cell.scheduleLabel;
+                                tagRow.appendChild(scheduleTag);
+                            } else {
+                                const inTag = document.createElement('span');
+                                inTag.className = `min-w-[58px] rounded-lg px-2 py-0.5 leading-none ${status.hasIn ? 'bg-green-50 border border-green-100 text-green-700' : 'bg-gray-100 border border-gray-200 text-gray-400'} ${isHighlighted ? 'text-red-600 border-red-200' : ''}`;
+                                inTag.textContent = '上';
 
-                            const outTag = document.createElement('span');
-                            outTag.className = `min-w-[58px] rounded-lg px-2 py-0.5 leading-none ${status.hasOut ? 'bg-red-50 border border-red-100 text-red-700' : 'bg-gray-100 border border-gray-200 text-gray-400'} ${isHighlighted ? 'text-red-600 border-red-200' : ''}`;
-                            outTag.textContent = '下';
+                                const outTag = document.createElement('span');
+                                outTag.className = `min-w-[58px] rounded-lg px-2 py-0.5 leading-none ${status.hasOut ? 'bg-red-50 border border-red-100 text-red-700' : 'bg-gray-100 border border-gray-200 text-gray-400'} ${isHighlighted ? 'text-red-600 border-red-200' : ''}`;
+                                outTag.textContent = '下';
 
-                            tagRow.appendChild(inTag);
-                            tagRow.appendChild(outTag);
+                                tagRow.appendChild(inTag);
+                                tagRow.appendChild(outTag);
+                            }
                         }
 
                         if (hasLeaveColumn) {
@@ -1406,11 +1596,21 @@
 
                             const inTime = document.createElement('span');
                             inTime.className = `min-w-[58px] text-center ${cell.inTime ? 'text-green-700' : 'text-transparent'}`;
-                            inTime.textContent = cell.inTime ? `${cell.inTime}${cell.inSupplement ? '(補)' : ''}` : '';
+                            inTime.textContent = cell.inTime
+                                ? formatActualTimeText(cell.inTime, {
+                                    isSupplement: cell.inSupplement,
+                                    isLate: isLateInCell(cell)
+                                })
+                                : '';
 
                             const outTime = document.createElement('span');
                             outTime.className = `min-w-[58px] text-center ${cell.outTime ? 'text-red-700' : 'text-transparent'}`;
-                            outTime.textContent = cell.outTime ? `${cell.outTime}${cell.outSupplement ? '(補)' : ''}` : '';
+                            outTime.textContent = cell.outTime
+                                ? formatActualTimeText(cell.outTime, {
+                                    isSupplement: cell.outSupplement,
+                                    isEarly: isEarlyOutCell(cell)
+                                })
+                                : '';
 
                             scheduledTimeRow.appendChild(scheduledInTime);
                             scheduledTimeRow.appendChild(scheduledOutTime);
@@ -1429,7 +1629,9 @@
                             timeRow.appendChild(leaveRangeCell);
                         }
 
-                        wrapper.appendChild(scheduledTimeRow);
+                        if (!isHolidayClockDay) {
+                            wrapper.appendChild(scheduledTimeRow);
+                        }
                         wrapper.appendChild(timeRow);
                         if (!isLeaveOnly) {
                             const locationRow = document.createElement('div');
@@ -1454,11 +1656,27 @@
                             }
                         }
 
-                        if (!isLeaveOnly) {
-                            const workHoursRow = document.createElement('div');
-                            workHoursRow.className = `mt-2 rounded-lg px-2 py-1.5 text-[11px] leading-tight text-center font-black shadow-sm ${isHighlighted ? 'bg-red-50 text-red-600 border border-red-100' : 'bg-blue-100 text-blue-800 border border-blue-200'}`;
-                            workHoursRow.textContent = `上班工時 ${formatHours(getDailyWorkMinutes(cell))} h`;
-                            wrapper.appendChild(workHoursRow);
+                        const shouldShowWorkHours = !isLeaveOnly && !isHolidayClockDay;
+                        const shouldShowLeaveHours = hasLeaveColumn;
+                        if (shouldShowWorkHours || shouldShowLeaveHours) {
+                            const hoursRow = document.createElement('div');
+                            hoursRow.className = `mt-2 grid ${shouldShowWorkHours && shouldShowLeaveHours ? 'grid-cols-2' : 'grid-cols-1'} gap-1 w-fit mx-auto`;
+
+                            if (shouldShowWorkHours) {
+                                const workHoursRow = document.createElement('div');
+                                workHoursRow.className = `w-[58px] min-w-[58px] rounded-lg px-2 py-1 text-[10px] leading-tight text-center font-black shadow-sm ${isHighlighted ? 'bg-red-50 text-red-600 border border-red-100' : 'bg-blue-100 text-blue-800 border border-blue-200'}`;
+                                workHoursRow.textContent = `${formatHours(getDailyWorkMinutes(cell))}h`;
+                                hoursRow.appendChild(workHoursRow);
+                            }
+
+                            if (shouldShowLeaveHours) {
+                                const leaveHoursRow = document.createElement('div');
+                                leaveHoursRow.className = `w-[58px] min-w-[58px] rounded-lg px-2 py-1 text-[10px] leading-tight text-center font-black shadow-sm ${isHighlighted ? 'bg-red-50 text-red-600 border border-red-100' : 'bg-orange-100 text-orange-800 border border-orange-200'}`;
+                                leaveHoursRow.textContent = `${formatHours(getLeaveMinutes(cell))}h`;
+                                hoursRow.appendChild(leaveHoursRow);
+                            }
+
+                            wrapper.appendChild(hoursRow);
                         }
 
                         const details = [];
@@ -1476,6 +1694,7 @@
                 }
 
                 [
+                    formatHours(monthlySummary.scheduledMinutes),
                     formatHours(monthlySummary.workMinutes),
                     formatHours(monthlySummary.leaveMinutes),
                     String(monthlySummary.specialLeaveDays),
@@ -1484,7 +1703,7 @@
                     String(monthlySummary.earlyCount)
                 ].forEach((value, index) => {
                     const td = document.createElement('td');
-                    td.className = `attendance-td px-3 py-3 text-center align-middle border-r border-b border-gray-200 font-bold ${index === 3 ? 'text-red-600' : 'text-gray-700'}`;
+                    td.className = `attendance-td px-3 py-3 text-center align-middle border-r border-b border-gray-200 font-bold ${index === 4 ? 'text-red-600' : 'text-gray-700'}`;
                     td.textContent = value;
                     tr.appendChild(td);
                 });
@@ -1667,11 +1886,38 @@
                 const dateKey = String(schedule?.date || '').trim();
                 if (!dateKey.startsWith(`${monthKey}-`)) return;
 
-                const scheduleUserId = String(schedule?.userId || '').trim();
-                const matchedProfile = directoryIndex.byId.get(scheduleUserId) || null;
+                const scheduleUserName = safeText(schedule?.userName || schedule?.name || '', '');
+                const normalizedScheduleName = normalizeNameLabel(scheduleUserName);
+                const scheduleUserIds = [
+                    schedule?.userId,
+                    schedule?.uid,
+                    schedule?.userUid,
+                    schedule?.userUID,
+                    schedule?.email,
+                    schedule?.userEmail
+                ].map((value) => String(value || '').trim()).filter(Boolean);
+                const matchedProfile = scheduleUserIds
+                    .map((id) => directoryIndex.byId.get(id))
+                    .find(Boolean) || directoryIndex.byName.get(normalizedScheduleName) || null;
                 if (matchedProfile && shouldExcludeRoleFromTable(matchedProfile)) return;
 
-                const userKey = matchedProfile ? getDirectoryUserKey(matchedProfile) : scheduleUserId;
+                let userKey = matchedProfile ? getDirectoryUserKey(matchedProfile) : (scheduleUserIds[0] || scheduleUserName);
+                if (!userKey || !userMap.has(userKey)) {
+                    if (scheduleUserIds.length) {
+                        const fallbackEntry = Array.from(userMap.entries()).find(([, row]) => (
+                            scheduleUserIds.includes(String(row?.profile?.id || '').trim()) ||
+                            scheduleUserIds.includes(String(row?.profile?.uid || '').trim()) ||
+                            scheduleUserIds.includes(String(row?.profile?.email || '').trim().toLowerCase())
+                        ));
+                        userKey = fallbackEntry ? fallbackEntry[0] : userKey;
+                    }
+                    if (normalizedScheduleName) {
+                        const fallbackEntry = Array.from(userMap.entries()).find(([, row]) => (
+                            normalizeNameLabel(row?.name) === normalizedScheduleName
+                        ));
+                        userKey = fallbackEntry ? fallbackEntry[0] : '';
+                    }
+                }
                 if (!userKey || !userMap.has(userKey)) return;
 
                 const userRow = userMap.get(userKey);
@@ -1738,6 +1984,8 @@
                 user.companyIdsFromDays = getCompanyIdsFromDays(user.days);
                 user.communityIdsFromDays = getCommunityIdsFromDays(user.days);
                 user.profile = profile;
+                user.startDateKey = profile ? getProfileStartDateKey(profile) : '';
+                user.resignDateKey = profile ? getProfileResignDateKey(profile) : '';
                 user.profileCompanyNames = profile ? getProfileCompanyNames(profile) : [];
                 user.profileCommunityNames = profile ? getProfileCommunityNames(profile) : [];
                 user.primaryCompanyName = profile ? getPrimaryCompanyName(profile) : '';
@@ -1829,6 +2077,7 @@
                 applyFilters();
             });
             $('scope-filter').addEventListener('change', applyFilters);
+            $('download-excel-btn').addEventListener('click', handleDownloadExcel);
 
             $('clear-filter-btn').addEventListener('click', () => {
                 $('name-filter').value = '';
@@ -1897,7 +2146,7 @@
 
                 if ('serviceWorker' in navigator) {
                     try {
-                        const reg = await navigator.serviceWorker.register('./sw.js');
+                        const reg = await navigator.serviceWorker.register(`./sw.js?${swScriptVersion}`);
                         try { await reg.update(); } catch (_) {}
                         if (reg.waiting) {
                             reg.waiting.postMessage({ type: 'SKIP_WAITING' });
