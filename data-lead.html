@@ -269,16 +269,13 @@
                 state.shareValid = true;
                 state.shareReviewerName = safeString(data.reviewerName);
                 state.shareExpiresAt = expiresAt;
-                state.pageTab = 'leave';
-                state.reviewMode = 'pending';
-                localStorage.setItem('lead_page_tab', 'leave');
-                localStorage.setItem('lead_leave_review_mode', 'pending');
                 const cid = safeString(data.companyId);
                 if (cid) {
-                    state.companyId = cid;
-                    localStorage.setItem('lead_leave_company', cid);
+                    state.companyId = normalizeCompanyId(cid);
+                    localStorage.setItem('lead_leave_company', state.companyId);
                 }
                 setAuthWarning('');
+                setPageTab('leave');
             } catch (e) {
                 setAuthWarning(`讀取分享連結失敗：${e.message || e}`);
             }
@@ -315,6 +312,17 @@
         function safeString(value, fallback = '') {
             const v = String(value || '').trim();
             return v || fallback;
+        }
+
+        function normalizeCompanyId(value) {
+            const v = safeString(value);
+            if (!v) return '';
+            const upper = v.toUpperCase();
+            if (upper === 'TP') return 'TP';
+            if (upper === 'TY') return 'TY';
+            if (v.includes('台北')) return 'TP';
+            if (v.includes('桃園')) return 'TY';
+            return v;
         }
 
         function toTelHref(phone) {
@@ -391,17 +399,68 @@
             if (status !== '在職') return false;
             const role = safeString(u?.role);
             if (!role) return false;
-            const allowedRoleIds = new Set(['admin', 'hr', 'manager', 'cadre', 'staff']);
+            const allowedRoleIds = new Set(['admin', 'hr', 'manager', 'property', 'cadre', 'staff']);
             const roleNameById = new Map((state.roles || []).map(r => [String(r.id || ''), safeString(r.name)]));
             const roleLabel = roleNameById.get(role) || role;
-            return allowedRoleIds.has(role) || /(系統管理員|人事|物業|幹部|員工)/.test(roleLabel);
+            return allowedRoleIds.has(role) || /(系統管理員|人事|物業|管理層|幹部|員工)/.test(roleLabel);
+        }
+
+        function isActiveEmployee(u) {
+            return safeString(u?.status, '在職') === '在職';
+        }
+
+        function isAttendanceUser(u) {
+            if (!isActiveEmployee(u)) return false;
+
+            const roleId = safeString(u?.role);
+            const roleMap = {
+                admin: '系統管理員',
+                manager: '管理層',
+                hr: '人事',
+                cadre: '幹部',
+                staff: '員工',
+                secretary: '秘書',
+                cleaner: '清潔',
+                mechanic: '機電',
+                guard: '保全',
+                property: '物業',
+                temp_guard: '臨時保全'
+            };
+            const roleNameById = new Map((state.roles || []).map(r => [String(r.id || ''), safeString(r.name)]));
+            const roleName = safeString(u?.roleName) || roleNameById.get(roleId) || roleMap[roleId] || roleId;
+
+            const title = safeString(u?.title);
+            const blockedPattern = /(總幹事|保全|管理層|秘書|清潔|機電|臨時保全)/;
+            const blockedRoleIds = new Set([
+                'manager',
+                'gm',
+                'secretary',
+                'clean',
+                'cleaner',
+                'mech',
+                'mechanic',
+                'guard',
+                'dayGuard',
+                'nightGuard',
+                'temp_guard',
+                'tempGuard'
+            ]);
+            if (blockedRoleIds.has(roleId)) return false;
+            if (blockedPattern.test(roleId) || blockedPattern.test(roleName) || blockedPattern.test(title)) return false;
+            return true;
         }
 
         function buildUserOptions() {
             const select = $('user-select');
             const current = select.value;
             while (select.options.length > 1) select.remove(1);
-            const filteredUsers = getCompanyUsers().filter((u) => isAllowedAccount(u));
+            const filteredUsers = (state.pageTab === 'attendance'
+                ? getCompanyUsers().filter(isAttendanceUser)
+                : (state.shareValid && !state.authUser
+                    ? getCompanyUsers()
+                    : getCompanyUsers().filter(isAllowedAccount)
+                )
+            );
             filteredUsers
                 .slice()
                 .sort((a, b) => safeString(a.name).localeCompare(safeString(b.name), 'zh-Hant'))
@@ -423,11 +482,13 @@
 
         function getCompanyUsers() {
             const users = state.users || [];
-            if (!state.companyId) return users;
-            const companyId = String(state.companyId);
+            const companyId = normalizeCompanyId(state.companyId);
+            if (!companyId) return users;
             return users.filter((u) => {
-                const companyIds = Array.isArray(u.companyIds) ? u.companyIds.map(String) : [];
-                return companyIds.includes(companyId) || String(u.companyId || '') === companyId;
+                const rawCompanyIds = Array.isArray(u.companyIds) ? u.companyIds : [];
+                const normalizedCompanyIds = rawCompanyIds.map(normalizeCompanyId).filter(Boolean);
+                const normalizedMain = normalizeCompanyId(u.companyId);
+                return normalizedCompanyIds.includes(companyId) || normalizedMain === companyId;
             });
         }
 
@@ -1069,26 +1130,27 @@
             const line = el('div', 'font-bold text-gray-800 text-sm flex items-center gap-2 flex-wrap');
             line.appendChild(el('span', '', safeString(user?.name || user?.email || user?.phone || user?.id, '(未命名)')));
             if (statusTag === 'missing') {
-                line.appendChild(el('span', 'text-[10px] px-1.5 py-0.5 rounded-lg bg-red-100 text-red-700', '未打卡'));
+                const missText = outRecord ? '缺上班' : '未打卡';
+                line.appendChild(el('span', 'text-[10px] px-1.5 py-0.5 rounded-lg bg-red-100 text-red-700', missText));
             } else {
-                line.appendChild(el('span', 'text-[10px] px-1.5 py-0.5 rounded-lg bg-green-100 text-green-700', '已打卡'));
+                line.appendChild(el('span', 'text-[10px] px-1.5 py-0.5 rounded-lg bg-green-100 text-green-700', outRecord ? '已打卡' : '缺下班'));
             }
             text.appendChild(line);
 
-            if (statusTag === 'checked' && inRecord) {
+            if (inRecord) {
                 const inDt = getRecordDateObj(inRecord);
                 const inLocation = safeString(inRecord?.checkInLocationName) || safeString(inRecord?.address) || '-';
                 const inMeta = el('div', 'text-xs text-gray-400 mt-1');
                 inMeta.textContent = `上班打卡：${formatTimeOnly(inDt)}｜${inLocation}`;
                 text.appendChild(inMeta);
+            }
 
-                if (outRecord) {
-                    const outDt = getRecordDateObj(outRecord);
-                    const outLocation = safeString(outRecord?.checkInLocationName) || safeString(outRecord?.address) || '-';
-                    const outMeta = el('div', 'text-xs text-gray-400 mt-1');
-                    outMeta.textContent = `下班打卡：${formatTimeOnly(outDt)}｜${outLocation}`;
-                    text.appendChild(outMeta);
-                }
+            if (outRecord) {
+                const outDt = getRecordDateObj(outRecord);
+                const outLocation = safeString(outRecord?.checkInLocationName) || safeString(outRecord?.address) || '-';
+                const outMeta = el('div', 'text-xs text-gray-400 mt-1');
+                outMeta.textContent = `下班打卡：${formatTimeOnly(outDt)}｜${outLocation}`;
+                text.appendChild(outMeta);
             }
 
             left.appendChild(avatarWrap);
@@ -1138,7 +1200,7 @@
                 if (outTypes.has(t)) updateLatest(outByUserId, uid, r);
             });
 
-            const baseUsers = getCompanyUsers().filter(isAllowedAccount);
+            const baseUsers = getCompanyUsers().filter(isAttendanceUser);
             const users = state.userId
                 ? baseUsers.filter(u => String(u.id || '') === String(state.userId))
                 : baseUsers;
