@@ -65,14 +65,6 @@
             </div>
         </div>
 
-        <!-- 已巡邏地點標籤 -->
-        <div id="patrol-tags-container" class="bg-white rounded-xl p-4 shadow-sm mb-4 border border-gray-100">
-            <h3 class="text-xs font-bold text-gray-400 uppercase mb-2">已巡邏地點</h3>
-            <div id="patrol-tags" class="flex flex-wrap gap-2">
-                <span class="text-sm text-gray-400 italic">尚無巡邏記錄</span>
-            </div>
-        </div>
-
         <!-- 視圖：掃描打卡 -->
         <div id="view-scanner" class="view-content">
             <div class="bg-white rounded-xl shadow-sm overflow-hidden mb-4">
@@ -139,7 +131,7 @@
                 <button onclick="changeLogDate(-1)" class="p-1 rounded-lg hover:bg-gray-100 text-gray-500">
                     <i data-lucide="chevron-left" size="16"></i>
                 </button>
-                <div id="logs-date-label" class="text-xs font-bold text-gray-500 bg-gray-100 px-2 py-1 rounded-lg whitespace-nowrap"></div>
+                <div id="logs-date-label" onclick="openLogsDatePicker()" class="text-xs font-bold text-gray-500 bg-gray-100 px-2 py-1 rounded-lg whitespace-nowrap cursor-pointer select-none hover:bg-gray-200"></div>
                 <button onclick="changeLogDate(1)" class="p-1 rounded-lg hover:bg-gray-100 text-gray-500">
                     <i data-lucide="chevron-right" size="16"></i>
                 </button>
@@ -349,6 +341,10 @@
                     <label class="block text-xs font-bold text-gray-400 uppercase mb-1">對應代碼 (Code)</label>
                     <input type="text" id="edit-log-code" class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:border-red-500 focus:ring-1 focus:ring-red-500 outline-none transition font-mono">
                 </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-400 uppercase mb-1">打卡時間</label>
+                    <input type="datetime-local" id="edit-log-time" class="w-full px-4 py-3 rounded-lg border border-gray-200 focus:border-red-500 focus:ring-1 focus:ring-red-500 outline-none transition font-mono">
+                </div>
                 <div class="grid grid-cols-2 gap-2">
                     <div>
                         <label class="block text-xs font-bold text-gray-400 uppercase mb-1">緯度</label>
@@ -454,15 +450,15 @@
         </div>
     </div>
 
-    <div id="share-modal" class="fixed inset-0 bg-black/50 z-[114] hidden p-6 flex items-center justify-center" onclick="closeShareModal()">
-        <div class="bg-white rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden" onclick="event.stopPropagation()">
+    <div id="share-modal" class="fixed inset-0 bg-black/50 z-[114] hidden p-6 flex items-center justify-center">
+        <div class="bg-white rounded-2xl w-full max-w-xs shadow-2xl overflow-hidden">
             <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
                 <div class="font-black text-gray-800 text-base">分享督勤紀錄</div>
                 <button onclick="closeShareModal()" class="p-1 rounded-full hover:bg-gray-100 text-gray-500">
                     <i data-lucide="x" size="18"></i>
                 </button>
             </div>
-            <div class="px-5 py-4 space-y-4">
+            <div class="px-5 py-4">
                 <div id="share-community-name" class="text-sm font-bold text-gray-800 mb-3"></div>
                 <button onclick="openSharedLogs()" class="w-full flex items-center justify-center">
                     <div id="share-qr" class="bg-white p-3 rounded-xl border border-gray-100 shadow-sm"></div>
@@ -471,13 +467,7 @@
                     <div class="text-xs font-bold text-gray-400 uppercase mb-1">網址</div>
                     <div id="share-url" class="text-xs text-gray-700 break-all bg-gray-50 rounded-lg p-2 border border-gray-100"></div>
                 </div>
-                <div class="text-[11px] text-gray-500">點擊 QR Code 可開啟公開頁面（不需登入）。</div>
-                <button onclick="shareToLine()" class="w-full py-3 rounded-2xl bg-[#06C755] hover:bg-[#05b64d] text-white font-black transition-colors flex items-center justify-center gap-2">
-                    <span class="w-5 h-5 rounded bg-white/20 flex items-center justify-center">
-                        <i data-lucide="message-circle" class="w-4 h-4"></i>
-                    </span>
-                    分享到 Line
-                </button>
+                <div class="mt-3 text-[11px] text-gray-500">點擊 QR Code 可開啟公開頁面（不需登入）。</div>
             </div>
             <div class="px-5 py-4 border-t border-gray-100">
                 <button onclick="closeShareModal()" class="w-full bg-gray-100 text-gray-700 py-3 rounded-xl font-bold hover:bg-gray-200 transition">關閉</button>
@@ -1239,6 +1229,52 @@
             renderLogs();
         }
 
+        function openLogsDatePicker() {
+            try {
+                const tempInput = document.createElement('input');
+                tempInput.type = 'date';
+                tempInput.value = toInputDate(selectedLogsDate || new Date());
+                const today = new Date();
+                tempInput.max = toInputDate(today);
+                tempInput.style.position = 'fixed';
+                tempInput.style.top = '0';
+                tempInput.style.left = '0';
+                tempInput.style.opacity = '0.001';
+                tempInput.style.pointerEvents = 'none';
+                tempInput.style.zIndex = '-1';
+                tempInput.style.width = '1px';
+                tempInput.style.height = '1px';
+                tempInput.addEventListener('change', (e) => {
+                    const v = String(e?.target?.value || '').trim();
+                    if (v) {
+                        const [y, m, d] = v.split('-').map(n => parseInt(n, 10));
+                        if (y && m && d) {
+                            const next = new Date(y, m - 1, d, 0, 0, 0, 0);
+                            const today = new Date();
+                            today.setHours(0, 0, 0, 0);
+                            if (next.getTime() <= today.getTime()) {
+                                selectedLogsDate = next;
+                                updateLogsDateLabel();
+                                subscribeLogsForDate(selectedLogsDate);
+                                renderLogs();
+                            }
+                        }
+                    }
+                    setTimeout(() => { try { document.body.removeChild(tempInput); } catch (_) {} }, 100);
+                });
+                document.body.appendChild(tempInput);
+                if (typeof tempInput.showPicker === 'function') {
+                    try { tempInput.showPicker(); return; } catch (_) {}
+                }
+                try {
+                    tempInput.style.pointerEvents = 'auto';
+                    tempInput.focus();
+                    const rect = tempInput.getBoundingClientRect();
+                    try { tempInput.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: rect.left + 1, clientY: rect.top + 1 })); } catch (_) {}
+                } catch (_) {}
+            } catch (_) {}
+        }
+
         function pad2(n) {
             return String(n).padStart(2, '0');
         }
@@ -1941,36 +1977,13 @@
 
         function updatePatrolCount() {
             const list = Array.isArray(logs) ? logs : [];
-            const uniqueCodes = new Set(list.map(x => normalizeKey(x.code) || normalizeKey(x.location)).filter(Boolean));
+            const unique = new Set(list.map(x => normalizeKey(x.code) || normalizeKey(x.location)).filter(Boolean));
 
             const totalEl = document.getElementById('patrol-count');
             if (totalEl) totalEl.innerText = String(list.length);
 
             const uniqueEl = document.getElementById('patrol-unique-count');
-            if (uniqueEl) uniqueEl.innerText = String(uniqueCodes.size);
-
-            // 更新巡逻点标签
-            const tagsContainer = document.getElementById('patrol-tags');
-            if (tagsContainer) {
-                if (uniqueCodes.size === 0) {
-                    tagsContainer.innerHTML = `<span class="text-sm text-gray-400 italic">尚無巡邏記錄</span>`;
-                } else {
-                    const tags = Array.from(uniqueCodes).map(code => {
-                        const mappedData = locationMap[code];
-                        const name = mappedData 
-                            ? (typeof mappedData === 'object' && mappedData.name 
-                                ? normalizeKey(mappedData.name) 
-                                : normalizeKey(mappedData))
-                            : normalizeKey(code);
-                        return `<span class="px-3 py-1 bg-red-50 text-red-700 text-sm font-medium rounded-full border border-red-100 flex items-center gap-1">
-                            <i data-lucide="check-circle" size="14"></i>
-                            ${escapeHtml(name)}
-                        </span>`;
-                    }).join('');
-                    tagsContainer.innerHTML = tags;
-                }
-                lucide.createIcons();
-            }
+            if (uniqueEl) uniqueEl.innerText = String(unique.size);
         }
 
         function renderLogs() {
@@ -2263,7 +2276,8 @@
         }
 
         function buildShareUrl() {
-            const base = new URL('./check.html', window.location.href);
+            const base = new URL(window.location.href);
+            base.pathname = base.pathname.endsWith('/') ? `${base.pathname}check.html` : base.pathname;
             base.searchParams.set('public', '1');
             base.searchParams.set('communityId', String(selectedCommunityId || '').trim());
             base.searchParams.delete('date');
@@ -2305,13 +2319,6 @@
             window.open(sharePublicUrl, '_blank');
         }
 
-        function shareToLine() {
-            if (!sharePublicUrl) sharePublicUrl = buildShareUrl();
-            if (!sharePublicUrl) return;
-            const lineUrl = `https://social-plugins.line.me/lineit/share?url=${encodeURIComponent(sharePublicUrl)}`;
-            window.open(lineUrl, '_blank', 'noopener');
-        }
-
         function openEditLogModal(logId) {
             if (!canManageSettings) return;
             const id = String(logId || '');
@@ -2321,11 +2328,26 @@
             const idEl = document.getElementById('edit-log-id');
             const nameEl = document.getElementById('edit-log-location');
             const codeEl = document.getElementById('edit-log-code');
+            const timeEl = document.getElementById('edit-log-time');
             const latEl = document.getElementById('edit-log-lat');
             const lngEl = document.getElementById('edit-log-lng');
             if (idEl) idEl.value = id;
             if (nameEl) nameEl.value = normalizeKey(target.location || '');
             if (codeEl) codeEl.value = normalizeKey(target.code || '');
+            if (timeEl) {
+                let tsMs = null;
+                const ts = target.createdAt;
+                if (ts && typeof ts.toDate === 'function') { try { tsMs = ts.toDate().getTime(); } catch (_) {} }
+                else if (ts instanceof Date) tsMs = ts.getTime();
+                else if (typeof ts === 'number') tsMs = ts;
+                if (tsMs) {
+                    const d = new Date(tsMs);
+                    const pad = n => String(n).padStart(2, '0');
+                    timeEl.value = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+                } else {
+                    timeEl.value = '';
+                }
+            }
             if (latEl) latEl.value = (typeof target.lat === 'number') ? String(target.lat) : '';
             if (lngEl) lngEl.value = (typeof target.lng === 'number') ? String(target.lng) : '';
             if (modal) modal.classList.remove('hidden');
@@ -2343,6 +2365,7 @@
             const id = String(document.getElementById('edit-log-id')?.value || '');
             const nextLocation = normalizeKey(document.getElementById('edit-log-location')?.value);
             const nextCode = normalizeKey(document.getElementById('edit-log-code')?.value);
+            const timeVal = String(document.getElementById('edit-log-time')?.value || '').trim();
             const latStr = normalizeKey(document.getElementById('edit-log-lat')?.value);
             const lngStr = normalizeKey(document.getElementById('edit-log-lng')?.value);
             const lat = latStr ? Number(latStr) : null;
@@ -2357,6 +2380,13 @@
                 updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
                 updatedBy: dbUser.id
             };
+            if (timeVal && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(timeVal)) {
+                try {
+                    const [y, m, d, hh, mm] = timeVal.split(/[-T:]/).map(n => parseInt(n, 10));
+                    const newDate = new Date(y, m - 1, d, hh, mm, 0, 0);
+                    payload.createdAt = firebase.firestore.Timestamp.fromDate(newDate);
+                } catch (_) {}
+            }
             if (Number.isFinite(lat) && Number.isFinite(lng)) {
                 payload.lat = lat;
                 payload.lng = lng;
